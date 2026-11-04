@@ -84,7 +84,7 @@ typedef struct EipAdapter {
     /* Added for the ESP32 port. All have backward-compatible defaults. */
     uint8_t netmask[4];         /* for the CIP multicast address; 255.255.255.0 by default */
     uint8_t t2o_multicast;      /* the open connection produces to a multicast group */
-    uint32_t timeout_floor_ms;  /* minimum inactivity timeout; 2000 by default (NetBurner 20 Hz tick) */
+    uint32_t timeout_floor_ms;  /* minimum inactivity timeout; 2000 in the bare core, and EipServer replaces it */
     uint32_t timeouts;          /* connections closed by the inactivity watchdog */
     uint32_t opens;             /* successful Forward_Opens */
     /* TCP/IP Interface (0xF5) and Ethernet Link (0xF6) object values. Zero until set. */

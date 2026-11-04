@@ -2,7 +2,7 @@
 #
 # Two uses:
 #   1. ESP-IDF component: put this directory in EXTRA_COMPONENT_DIRS (or
-#      reference it from idf_component.yml) and REQUIRES quickeip.
+#      reference it from idf_component.yml) and REQUIRE it by the directory's name.
 #   2. Host build (POSIX port) with tests and tools:
 #        cmake -S . -B build && cmake --build build && ctest --test-dir build
 #

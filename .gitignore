@@ -12,3 +12,5 @@ examples/esp_idf_adapter/sdkconfig
 examples/esp_idf_adapter/sdkconfig.old
 examples/esp_idf_adapter/managed_components/
 examples/esp_idf_adapter/dependencies.lock
+# EZ-EDS check output
+examples/eds/*.log

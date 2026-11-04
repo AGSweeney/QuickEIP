@@ -50,7 +50,7 @@ void UserMain(void *pd)
     config.device_type = 43;             /* generic device */
     config.product_code = 1;
     config.revision_major = 1;
-    config.revision_minor = 0;
+    config.revision_minor = 1;
     config.product_name = "QuickEIP NetBurner";
     config.assemblies = kAssemblies;
     config.assembly_count = sizeof kAssemblies / sizeof kAssemblies[0];

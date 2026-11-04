@@ -86,6 +86,7 @@ int start_adapter(void)
     cfg.device_type = 43;            /* generic device */
     cfg.product_code = 1;
     cfg.revision_major = 1;
+    cfg.revision_minor = 1;          /* an EDS needs 1 or higher */
     cfg.product_name = "My Device";
     cfg.assemblies = assemblies;
     cfg.assembly_count = 3;
@@ -107,8 +108,9 @@ void exchange_data(void)
 ```
 
 The sizes in your EDS file must match these assemblies, or the PLC's
-Forward_Open is refused. See
-[INTEGRATION.md §3.3](docs/INTEGRATION.md#33-assemblies-and-your-eds-file).
+Forward_Open is refused. A sample is in `examples/eds`, and
+[INTEGRATION.md §3.6](docs/INTEGRATION.md#36-connecting-a-plc) covers
+connecting a PLC.
 
 ## Quick start: scanner
 
@@ -221,7 +223,8 @@ Check these against your application before you commit to QuickEIP.
   in the data, so UDTs and STRINGs aren't supported as such.
 - Bit access by name (`Tag.3`) isn't supported.
 - A packet cut short or too large closes the session, because the stream can't
-  be resynchronized. Check `eip_session_is_open` after an error, and reopen.
+  be resynchronized. After a socket error or repeated timeouts, close the session
+  and open it again: `eip_session_is_open` doesn't detect a lost peer.
 
 ## Memory and configuration
 
@@ -292,6 +295,9 @@ the scan uses first.
 ./build/eiptool get 127.0.0.1 4 101 3    # test assembly: 11 22 33 44 55 66 77 88
 ```
 
+Explicit messages work on `127.0.0.1`, but Class 1 needs the address the
+adapter reports.
+
 ## Examples
 
 | Directory | Shows |
@@ -300,6 +306,7 @@ the scan uses first.
 | `examples/esp_idf_adapter` | An adapter as an ESP-IDF project. |
 | `examples/clearcore_adapter` | A poll-mode adapter driving ClearCore I/O. |
 | `examples/posix_eiptool` | `eiptool`, using most of the scanner API. |
+| `examples/eds` | A sample EDS file matching the quick start. |
 | `examples/netburner_webui` | A browser test page. Application code, not part of the stack. It has no `main` or makefile, so add it to an NNDK application. |
 
 ## Repository layout
@@ -324,11 +331,15 @@ The repository root is also an ESP-IDF component (`CMakeLists.txt`,
 
 | Document | Read it to |
 |---|---|
-| [docs/INTEGRATION.md](docs/INTEGRATION.md) | Add QuickEIP to a project: configuration, the adapter and scanner APIs, setup per platform, troubleshooting. |
+| [docs/INTEGRATION.md](docs/INTEGRATION.md) | Add QuickEIP to a project: configuration, the adapter and scanner APIs, connecting a PLC, setup per platform, troubleshooting. |
 | [docs/PORTING.md](docs/PORTING.md) | Write a port for a new platform, and check it. |
 | [docs/MIGRATION.md](docs/MIGRATION.md) | Upgrade from QuickEIP 1.x (NetBurner). |
 
-The API reference is the comments in `include/`, starting with `eip.h`.
+The API reference is the comments in `include/`, starting with `eip.h`, plus
+each port's own header (`ports/esp-idf/eip_esp_idf.h`,
+`ports/clearcore/eip_clearcore.h`).
+
+Using a coding agent? Point it at [AGENTS.md](AGENTS.md).
 
 ## License
 

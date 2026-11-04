@@ -6,7 +6,7 @@
  * with QuickEIP:
  *
  *   ports/netburner    NetBurner NNDK 3.x (NBRTOS)
- *   ports/esp-idf      ESP-IDF 5.x (FreeRTOS + lwIP sockets), also Arduino-ESP32
+ *   ports/esp-idf      ESP-IDF 5.x (FreeRTOS + lwIP sockets)
  *   ports/posix        Linux, macOS, WSL (desktop tools and tests)
  *   ports/clearcore    Teknic ClearCore (bare metal, lwIP raw API, polled)
  *

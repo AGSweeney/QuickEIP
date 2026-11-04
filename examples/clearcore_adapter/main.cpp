@@ -38,6 +38,9 @@ int main(void)
 
     ConnectorIO0.Mode(Connector::OUTPUT_DIGITAL);
 
+    while (!EthernetMgr.PhyLinkActive()) {   /* wait for the cable */
+        Delay_ms(100);
+    }
     EthernetMgr.Setup();
     if (!EthernetMgr.DhcpBegin()) {
         EthernetMgr.LocalIp(IpAddress(192, 168, 1, 50)); /* fallback static address */
@@ -49,7 +52,7 @@ int main(void)
     config.device_type = 43;             /* generic device */
     config.product_code = 1;
     config.revision_major = 1;
-    config.revision_minor = 0;
+    config.revision_minor = 1;
     config.product_name = "QuickEIP ClearCore";
     config.assemblies = kAssemblies;
     config.assembly_count = sizeof kAssemblies / sizeof kAssemblies[0];

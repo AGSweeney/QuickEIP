@@ -167,7 +167,7 @@ typedef struct EipSymbol {
 /* One Class 1 connection to open as an originator. Assembly sizes are
  * limited to 600 bytes each way. */
 typedef struct EipIoConfig {
-    uint16_t config_instance;  /* assembly object instance, from the EDS */
+    uint16_t config_instance;  /* assembly object instance, from the EDS; 0 is sent as instance 0 */
     uint16_t output_instance;  /* O->T connection point (target consumes) */
     uint16_t input_instance;   /* T->O connection point (target produces) */
     uint16_t output_bytes;     /* assembly bytes we produce; 0 is a heartbeat */
@@ -244,7 +244,8 @@ void eip_session_close(EipSession *session);
 /* Change the routing of later requests on an open session. A slot outside
  * -1..255 is ignored. */
 void eip_session_set_slot(EipSession *session, int16_t slot);
-/* 1 when the session is registered and usable. Safe on a zeroed struct.
+/* 1 when the session is registered here. Safe on a zeroed struct. It does not
+ * detect a lost peer: after EIP_ERR_IO, close and reopen the session.
  * A timeout with nothing received keeps the session, and a late reply is
  * discarded by the next request. A packet cut short or too large closes the
  * session, because the stream can't be resynchronized: the failing call
@@ -330,7 +331,9 @@ int eip_io_open(EipSession *session, EipIo *io, const EipIoConfig *config);
 int eip_io_produce(EipIo *io, const uint8_t *data, uint16_t data_len, int run);
 /* Wait for the next T->O packet of this connection and copy input_bytes of
  * it. data_len is capacity in, byte count out. Packets for other connections
- * are skipped. timeout_ms 0 waits 1 second. */
+ * are skipped. timeout_ms 0 waits 1 second: there is no non-blocking form.
+ * EIP_ERR_TIMEOUT when nothing arrives, which is how a lost connection shows:
+ * eip_io_produce keeps succeeding, because it is UDP. */
 int eip_io_consume(EipIo *io, uint8_t *data, uint16_t *data_len, uint32_t timeout_ms);
 /* Send Forward_Close when the session is still open, then release the UDP
  * socket whatever the result. */
