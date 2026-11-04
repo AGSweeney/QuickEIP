@@ -1,0 +1,4 @@
+version: "2.0.0"
+description: "QuickEIP: a small EtherNet/IP scanner and adapter stack (portable C99)"
+dependencies:
+  idf: ">=5.0"

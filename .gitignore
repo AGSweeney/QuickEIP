@@ -1,0 +1,14 @@
+build/
+obj/
+*.o
+*.obj
+*.elf
+*.bin
+# NNDK puts objects for ../ sources next to the example (see docs/INTEGRATION.md)
+examples/netburner_adapter/ports/
+# ESP-IDF
+examples/esp_idf_adapter/build/
+examples/esp_idf_adapter/sdkconfig
+examples/esp_idf_adapter/sdkconfig.old
+examples/esp_idf_adapter/managed_components/
+examples/esp_idf_adapter/dependencies.lock
