@@ -1,5 +1,5 @@
 /* MIT License. Copyright (c) 2026 Adam G. Sweeney <agsweeney@gmail.com> */
-/* End-to-end test on one host (POSIX port): the built-in adapter runs in
+/* End-to-end test on one host (POSIX or Windows port): the built-in adapter runs in
  * its own thread, and the scanner API talks to it over this host's primary
  * interface address (not 127.0.0.1: the adapter advertises its interface
  * address for O->T, and only accepts O->T from the Forward_Open's source).
@@ -20,8 +20,14 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define usleep(us) Sleep((us) / 1000u)
+#else
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 
 static int g_failed = 0;
 static char g_host[16];
@@ -91,13 +97,24 @@ int main(void)
     int i;
     int found_self = 0;
 
-    /* Closing never-opened (zeroed) objects must not close descriptor 0. */
+    /* Closing never-opened (zeroed) objects must not close handle 0. */
     {
         static EipSession zeroed_session;
         static EipIo zeroed_io;
+#ifdef _WIN32
+        static const uint8_t self[4] = {127, 0, 0, 1};
+        eip_sock_t first = eip_hal_udp_open(0, 0);   /* handles are table slots: this is 0 */
+        EXPECT(first == 0, "first handle is 0");
+#endif
         eip_session_close(&zeroed_session);
         (void)eip_io_close(&zeroed_session, &zeroed_io);
+#ifdef _WIN32
+        EXPECT(eip_hal_udp_sendto(first, self, 9, (const uint8_t *)"x", 1) == EIP_OK,
+               "zeroed close leaves handle 0 alone");
+        eip_hal_udp_close(first);
+#else
         EXPECT(fcntl(0, F_GETFD) != -1, "zeroed close leaves fd 0 alone");
+#endif
         EXPECT(!eip_session_is_open(&zeroed_session), "zeroed session is not open");
     }
 

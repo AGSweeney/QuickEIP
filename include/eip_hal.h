@@ -8,6 +8,7 @@
  *   ports/netburner    NetBurner NNDK 3.x (NBRTOS)
  *   ports/esp-idf      ESP-IDF 5.x (FreeRTOS + lwIP sockets)
  *   ports/posix        Linux, macOS, WSL (desktop tools and tests)
+ *   ports/windows      Windows 7 and later (Winsock 2; desktop tools and tests)
  *   ports/clearcore    Teknic ClearCore (bare metal, lwIP raw API, polled)
  *
  * ports/bsd_sockets and ports/lwip_raw hold the socket half of the contract

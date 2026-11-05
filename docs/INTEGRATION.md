@@ -13,7 +13,8 @@ supported platform.
 - [7. ESP-IDF (ESP32)](#7-esp-idf-esp32)
 - [8. Teknic ClearCore](#8-teknic-clearcore)
 - [9. Linux, macOS, WSL](#9-linux-macos-wsl)
-- [10. Troubleshooting](#10-troubleshooting)
+- [10. Windows](#10-windows)
+- [11. Troubleshooting](#11-troubleshooting)
 
 ---
 
@@ -114,7 +115,7 @@ different roles: 100 is consumed there, and 101 and 102 are produced.
 
 How the adapter gets run depends on the port:
 
-- **RTOS ports** (NetBurner, ESP-IDF, POSIX) start a task. Nothing else to do.
+- **RTOS ports** (NetBurner, ESP-IDF, POSIX, Windows) start a task. Nothing else to do.
 - **Poll-mode ports** (ClearCore, bare-metal lwIP) start nothing. Call
   `eip_adapter_poll()` from the main loop on every pass, at least every
   few milliseconds and more often than your fastest RPI.
@@ -794,7 +795,7 @@ cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-This builds `libquickeip.a` (core + POSIX port), the three tests, and
+This builds `libquickeip.a` (core + POSIX port), the tests, and
 `eiptool`:
 
 ```
@@ -833,7 +834,63 @@ Linking `quickeip` brings in the include path and threads. Without the two
 `OFF` lines the tests and `eiptool` also build, and `eiptool` lands in
 `build/quickeip/`.
 
-## 10. Troubleshooting
+## 10. Windows
+
+Tested with Visual Studio 2022 on Windows 11, as x64 and Win32. The port is
+`ports/windows/eip_hal_windows.c`, and it needs Windows 7 or later.
+
+```sh
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+build/Release/eiptool scan
+```
+
+`eiptool` takes the same commands as in section 9.
+
+**In your own project,** compile `src/*.c` and
+`ports/windows/eip_hal_windows.c`, add `include/` and `src/` to the include
+path, and link `ws2_32`, `iphlpapi` and `winmm`.
+
+| Define | Default | Effect |
+|---|---|---|
+| `EIP_WIN_POLL_MODE` | off | Start no adapter thread. Your loop calls `eip_adapter_poll()`. |
+| `EIP_ADAPTER_TASK_PRIORITY` | 0 | A `THREAD_PRIORITY_*` value for the adapter thread. 0 picks `THREAD_PRIORITY_HIGHEST`. |
+| `EIP_ADAPTER_TASK_STACK` | 0 | Adapter thread stack in bytes. 0 is the system default. |
+| `EIP_WIN_MAX_SOCKETS` | 64 | Sockets open at once. |
+| `EIP_WIN_MAX_INTERFACES` | 16 | Interfaces reported. |
+| `EIP_WIN_NETIF_REFRESH_MS` | 2000 | How often the interface list is re-read, off the adapter thread. |
+
+**Things to know**
+
+- **Choose the interface on a PC with several.** The adapter reports interface
+  0 as its address, in ListIdentity and in the O→T socket address of a
+  Forward_Open. Interface 0 is the first one that's up and has a default
+  gateway, which is often not the machine network. Set `EIP_NETIF` to the
+  adapter's friendly name or IPv4 address: `EIP_NETIF="Ethernet 2"` or
+  `EIP_NETIF=10.168.41.1`. A named interface is kept even while its cable is
+  out, and reports link down. Scanner calls don't need this: they use whichever
+  interface routes to the target.
+- **Firewall.** An adapter needs inbound TCP 44818, UDP 44818 and UDP 2222
+  allowed for your program. A scanner running Class 1 needs inbound UDP on
+  its local port. Check which profile the network is in with
+  `Get-NetConnectionProfile`.
+- **Busy ports.** Other EtherNet/IP software on the PC (RSLinx, for example)
+  may already hold 44818 or 2222. Every bind here is exclusive, so the adapter
+  then fails to open them and `listening` stays 0 rather than sharing the port.
+- **Timing.** The port sets a 1 ms system timer period for the process from its
+  first call, which costs some power on a laptop. On the test PC a 10 ms RPI
+  ran at a mean of 10.00 ms, worst 11.83 ms over 1,500 packets, with both ends
+  on the one host.
+- **Windows isn't real time.** A stall of about 100 ms has been measured on a
+  bench PC. Keep the inactivity timeout well above that: set `timeout_floor_ms`
+  in `EipAdapterConfig` to 500 or more. Don't put a safety function on this.
+- **Link reporting.** Speed comes from Windows. Duplex and autonegotiation
+  aren't exposed, so the port reports full duplex and autonegotiated while the
+  link is up.
+- **Untested:** multicast T→O, and a real PLC connecting to a Windows adapter.
+
+## 11. Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|

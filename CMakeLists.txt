@@ -3,7 +3,7 @@
 # Two uses:
 #   1. ESP-IDF component: put this directory in EXTRA_COMPONENT_DIRS (or
 #      reference it from idf_component.yml) and REQUIRE it by the directory's name.
-#   2. Host build (POSIX port) with tests and tools:
+#   2. Host build (POSIX or Windows port) with tests and tools:
 #        cmake -S . -B build && cmake --build build && ctest --test-dir build
 #
 # Other platforms (NetBurner, ClearCore) use their own build systems; see
@@ -38,25 +38,39 @@ option(QUICKEIP_BUILD_TOOLS "Build the command-line tools" ON)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+if(MSVC)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
 
 # Portable core only (bring your own eip_hal_* implementation).
 add_library(quickeip_core STATIC ${QUICKEIP_CORE_SOURCES})
 target_include_directories(quickeip_core PUBLIC include PRIVATE src)
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+if(MSVC)
+    target_compile_options(quickeip_core PRIVATE /W4)
+elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(quickeip_core PRIVATE -Wall -Wextra -Wpedantic -Wshadow)
 endif()
 
-# Core + POSIX port.
-if(UNIX)
-    find_package(Threads REQUIRED)
+# Core + host port (POSIX or Windows), with the tests and tools.
+if(WIN32)
+    set(QUICKEIP_HOST_PORT ports/windows/eip_hal_windows.c)
+elseif(UNIX)
+    set(QUICKEIP_HOST_PORT ports/bsd_sockets/eip_hal_bsd_sockets.c ports/posix/eip_hal_posix.c)
+endif()
+
+if(QUICKEIP_HOST_PORT)
     # One archive: the core calls the port and the port calls the core.
-    add_library(quickeip STATIC
-        ${QUICKEIP_CORE_SOURCES}
-        ports/bsd_sockets/eip_hal_bsd_sockets.c
-        ports/posix/eip_hal_posix.c)
-    target_link_libraries(quickeip PUBLIC Threads::Threads)
+    add_library(quickeip STATIC ${QUICKEIP_CORE_SOURCES} ${QUICKEIP_HOST_PORT})
     target_include_directories(quickeip PUBLIC include PRIVATE src)
-    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    if(WIN32)
+        target_link_libraries(quickeip PUBLIC ws2_32 iphlpapi winmm)
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(quickeip PUBLIC Threads::Threads)
+    endif()
+    if(MSVC)
+        target_compile_options(quickeip PRIVATE /W4)
+    elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(quickeip PRIVATE -Wall -Wextra)
     endif()
 
@@ -72,6 +86,11 @@ if(UNIX)
         target_include_directories(test_session PRIVATE src)
         target_link_libraries(test_session PRIVATE quickeip_core)
         add_test(NAME session COMMAND test_session)
+
+        add_executable(test_hal tests/test_hal.c)
+        target_link_libraries(test_hal PRIVATE quickeip)
+        add_test(NAME hal COMMAND test_hal)
+        set_tests_properties(hal PROPERTIES TIMEOUT 60)
 
         add_executable(test_loopback tests/test_loopback.c)
         target_link_libraries(test_loopback PRIVATE quickeip)

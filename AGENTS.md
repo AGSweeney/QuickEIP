@@ -15,8 +15,9 @@ time.
 | ESP-IDF | [INTEGRATION.md §7](docs/INTEGRATION.md#7-esp-idf-esp32) |
 | ClearCore | [INTEGRATION.md §8](docs/INTEGRATION.md#8-teknic-clearcore) |
 | Linux, or your own CMake project | [INTEGRATION.md §9](docs/INTEGRATION.md#9-linux-macos-wsl) |
+| Windows | [INTEGRATION.md §10](docs/INTEGRATION.md#10-windows) |
 | A new platform | [docs/PORTING.md](docs/PORTING.md) |
-| Something isn't working | [INTEGRATION.md §10](docs/INTEGRATION.md#10-troubleshooting) |
+| Something isn't working | [INTEGRATION.md §11](docs/INTEGRATION.md#11-troubleshooting) |
 | What isn't supported | [README Limitations](README.md#limitations) |
 
 The API reference is the comments in `include/`, plus each port's own header:
@@ -61,10 +62,12 @@ cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-This needs a Unix-like host (Linux, macOS or WSL). `test_loopback` also needs a
+This needs Linux, macOS, WSL, or Windows with Visual Studio (add `--config
+Release` to the build and `-C Release` to ctest). `test_loopback` also needs a
 non-loopback interface, and TCP and UDP 44818 and UDP 2222 free.
 
 - Keep `src/` free of OS calls: everything goes through `eip_hal.h`.
 - Add a test with each behaviour change: `tests/test_core.c` for the codec and
-  adapter core, `tests/test_session.c` for scanner sessions.
+  adapter core, `tests/test_session.c` for scanner sessions, `tests/test_hal.c`
+  for the port contract.
 - Use `/* */` comments in ASCII, and explain why rather than what.
