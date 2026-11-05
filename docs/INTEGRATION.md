@@ -875,6 +875,13 @@ path, and link `ws2_32`, `iphlpapi` and `winmm`.
   allowed for your program. A scanner running Class 1 needs inbound UDP on
   its local port. Check which profile the network is in with
   `Get-NetConnectionProfile`.
+- **A new `.exe` can lose its first replies.** Third-party security software
+  may hold back inbound UDP for the first seconds a program it hasn't seen
+  runs, even with Windows Firewall off. On a test PC with AVG, every freshly
+  built binary failed its first `eiptool identity` (once in two copies, twice
+  in a third) and answered in about 45 ms from then on. If a new build times
+  out or a scan comes back short, run it again before looking for a network
+  fault.
 - **Busy ports.** Other EtherNet/IP software on the PC (RSLinx, for example)
   may already hold 44818 or 2222. Every bind here is exclusive, so the adapter
   then fails to open them and `listening` stays 0 rather than sharing the port.
@@ -907,4 +914,4 @@ path, and link `ws2_32`, `iphlpapi` and `winmm`.
 | Scanner `EIP_ERR_CIP` with 0x16 | Object doesn't exist (for example a wrong assembly instance). |
 | Scanner `EIP_ERR_CIP` with 0x01 / 0x0204 on a routed session | The router timed out reaching the slot. Check the slot number, and that a module is there. |
 | Scanner calls return `EIP_ERR_STATE` after an error | The session closed itself after a broken packet. Reopen it. |
-| Scan finds nothing | Broadcasts don't cross routers or VLANs, so use `eip_list_identity` with an address instead. |
+| Scan finds nothing | Broadcasts don't cross routers or VLANs, so use `eip_list_identity` with an address instead. On Windows, also run a newly built program a second time: see section 10. |
