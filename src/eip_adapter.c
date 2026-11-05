@@ -544,7 +544,7 @@ static int BuildIdentityItem(const EipAdapter *adapter, uint8_t *item, uint16_t 
     item[2] = 0x00;
     item[3] = 0x02;
     item[4] = (uint8_t)(EIP_TCP_PORT >> 8);
-    item[5] = (uint8_t)EIP_TCP_PORT;
+    item[5] = (uint8_t)(EIP_TCP_PORT & 0xFFu);
     memcpy(item + 6, adapter->ip, 4);
     eip_store_le16(item + 18, adapter->vendor_id);
     eip_store_le16(item + 20, adapter->device_type);

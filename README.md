@@ -3,7 +3,7 @@
 A small EtherNet/IP stack for embedded targets, in portable C99. One code base
 works as a **scanner** (talks to PLCs and other devices) and as an **adapter**
 (looks like an I/O device to a PLC). It runs on NetBurner, ESP32, Teknic
-ClearCore and desktop Linux.
+ClearCore, desktop Linux and Windows.
 
 - No dynamic allocation in the protocol code. All sizes are set at build time.
 - No OS calls in the protocol code. A port of 19 functions supplies the clock,
@@ -159,8 +159,7 @@ Scanner calls block, so on an RTOS give them their own task.
 | ESP-IDF 5.x (ESP32) | `ports/esp-idf` + `ports/bsd_sockets` | its own task | IDF component | Builds (IDF 5.5.1, esp32). Not yet run on hardware. |
 | Teknic ClearCore | `ports/clearcore` + `ports/lwip_raw` | `eip_adapter_poll()` in the main loop | Microchip Studio | Builds and links (Enhanced ClearCore Library, arm-gcc 6.3). The adapter has run on hardware with a Micro850 PLC. |
 | Linux, WSL, macOS | `ports/posix` + `ports/bsd_sockets` | a thread | CMake | Unit and loopback tests pass, also under ASan and UBSan (gcc 13.3, Ubuntu 24.04 on WSL2). |
-
-There is no native Windows port. On Windows, use WSL.
+| Windows 7 and later | `ports/windows` | a thread, or `eip_adapter_poll()` with `EIP_WIN_POLL_MODE` | CMake | Unit, port-contract and loopback tests pass (Visual Studio 2022, x64 and Win32). Explicit scanner calls checked against a Micro850. Adapter not yet tested from a real PLC. |
 
 Step-by-step setup for each platform is in
 [docs/INTEGRATION.md](docs/INTEGRATION.md). To add a platform, see
@@ -182,8 +181,8 @@ Step-by-step setup for each platform is in
  │  eip_codec    packet encoding and parsing, used by both sides  │
  └───────────────────────────────┬────────────────────────────────┘
                                  │ eip_hal.h (19 functions)
-      ┌──────────────┬───────────┴───┬────────────────┐
-  netburner       esp-idf          posix          clearcore
+      ┌──────────────┬───────────┴───┬────────────────┬───────────┐
+  netburner       esp-idf          posix          clearcore    windows
                      └─ bsd_sockets ─┘             └ lwip_raw
 ```
 
@@ -261,19 +260,20 @@ ctest --test-dir build --output-on-failure
 | Target | What it is |
 |---|---|
 | `quickeip_core` | Portable core only. Link your own `eip_hal_*` port. |
-| `quickeip` | Core plus the POSIX port. |
+| `quickeip` | Core plus the host port (POSIX or Windows). |
 | `eiptool` | Command-line tool (`-DQUICKEIP_BUILD_TOOLS=OFF` to skip). |
-| `test_core`, `test_session`, `test_loopback` | Tests (`-DQUICKEIP_BUILD_TESTS=OFF` to skip). |
+| `test_core`, `test_session`, `test_hal`, `test_loopback` | Tests (`-DQUICKEIP_BUILD_TESTS=OFF` to skip). |
 
 | Test | Covers | Needs |
 |---|---|---|
 | `test_core` | The codec and the adapter core, byte for byte, including Forward_Open captures from real devices. | Nothing: no sockets or clock. |
 | `test_session` | The scanner session against a scripted device through a fake HAL: routed requests and router failures, late, cut-short and oversize replies. | Nothing: no sockets or clock. |
-| `test_loopback` | Scanner against adapter through the POSIX port: discovery, explicit messages, Class 1 both ways, idle, the watchdog, reopen. | A non-loopback interface, and TCP and UDP 44818 and UDP 2222 free. |
+| `test_hal` | The port contract, called directly over this host's loopback: busy ports fail, long datagrams truncate, ICMP errors aren't fatal, timeouts hold, the clock really steps at its reported resolution. | Free TCP and UDP ports in the 478xx range. |
+| `test_loopback` | Scanner against adapter through the host port: discovery, explicit messages, Class 1 both ways, idle, the watchdog, reopen. | A non-loopback interface, and TCP and UDP 44818 and UDP 2222 free. |
 
 ## eiptool
 
-A command-line scanner and test adapter, built on the POSIX port.
+A command-line scanner and test adapter, built on the host port.
 
 ```
 eiptool scan
@@ -320,7 +320,7 @@ include/   eip.h         public API: scanner and built-in adapter
 src/       portable protocol code
 ports/     one directory per platform, plus the shared socket layers
 examples/  see above
-tests/     test_core, test_session, test_loopback
+tests/     test_core, test_session, test_hal, test_loopback
 docs/      INTEGRATION.md, PORTING.md, MIGRATION.md
 ```
 

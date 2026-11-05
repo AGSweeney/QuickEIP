@@ -24,7 +24,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define sleep(seconds) Sleep((seconds) * 1000u)
+#else
 #include <unistd.h>
+#endif
 
 static EipSession g_session;
 
