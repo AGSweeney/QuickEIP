@@ -1,0 +1,93 @@
+\chapter{Troubleshooting}\label{ch:trouble}
+
+This chapter helps you find the cause of a fault. Start with the snapshot of
+the adapter, or with the CIP status of the scanner. They usually show the
+cause.
+
+\section{Fault Isolation Procedure}
+
+\begin{procedure}{Isolate a Class 1 fault}
+\begin{enumerate}
+  \item Call \code{eip_adapter_snapshot}.
+  \item If \code{listening} is 0, go to table~\ref{tab:trouble}, first row.
+  \item If the PLC shows a module fault, read its status code.
+  \item Find the code in table~\ref{tab:forwardopen}.
+  \item If \code{opens} increases and \code{timeouts} increases with it,
+        examine the \code{rx_dropped_*} counters.
+  \item If \code{rx_dropped_source} increases, examine the addresses
+        (section~\ref{sec:originator}).
+  \item If \code{rx_dropped_seq} increases, look for duplicate or old
+        packets on the network.
+  \item If the consumed data is zero but the PLC sends data, examine
+        \code{run}. The PLC is possibly in Program mode.
+\end{enumerate}
+\end{procedure}
+
+\section{Symptoms and Causes}
+
+\begin{longtable}{@{}P{0.42\linewidth}P{0.53\linewidth}@{}}
+\caption{Symptoms and their probable causes}\label{tab:trouble}\\
+\toprule
+\textbf{Symptom} & \textbf{Probable cause and remedy} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Symptom} & \textbf{Probable cause and remedy} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{listening} stays 0 & Another program holds TCP or UDP 44818 or UDP 2222. Or the interface has no address yet. The server tries again each second. \\
+\addlinespace
+The PLC shows a module fault with code \code{16\#0127} or \code{16\#0128} & The EDS connection sizes do not agree with the assembly sizes. See section~\ref{sec:sizes}. Remember the 4-byte run/idle header on \OT. \\
+\addlinespace
+Class~1 opens, then stops after less than a second, and \code{rx_dropped_source} increases & Use the IP address that the adapter reports, not \code{127.0.0.1} or another address of the host. See section~\ref{sec:originator}. \\
+\addlinespace
+\code{eip_io_open} returns \code{EIP_ERR_IO} after a lost connection & Close and open the session also. See section~\ref{sec:recover}. \\
+\addlinespace
+ESP-IDF: \code{Failed to resolve component ... unknown name} & The key in \file{idf_component.yml} is not the same as the QuickEIP directory name. See section~\ref{sec:espidf}. \\
+\addlinespace
+ClearCore: \code{lwip/ip_addr.h: No such file or directory} & The C compiler does not have the LwIP paths. See section~\ref{sec:clearcore}, step 8. \\
+\addlinespace
+The connection times out each few seconds & \OT{} data does not arrive, or the adapter refuses it. \code{rx_dropped_source} counts packets from a wrong address (NAT, hosts with more than one address). \code{rx_dropped_seq} counts duplicate or old sequence numbers. On Wi-Fi, examine the latency. \\
+\addlinespace
+\code{opens} increases and \code{timeouts} increases with it & The same as the previous row. Also make sure that no firewall stops UDP 2222 or TCP and UDP 44818. \\
+\addlinespace
+Outputs read zero, but the PLC sends data & The PLC is in Program mode (idle). This is the design. \\
+\addlinespace
+Scanner \code{EIP_ERR_CIP} with \hex{05} or \hex{04} & The tag or the path is not found (\hex{05}), or it is malformed (\hex{04}). Examine the tag name and the slot ($-1$ or a backplane slot). \\
+\addlinespace
+Scanner \code{EIP_ERR_CIP} with \hex{16} & The object does not exist, for example a wrong assembly instance. \\
+\addlinespace
+Scanner \code{EIP_ERR_CIP} with \hex{01} / \hex{0204} on a routed session & The router did not get to the slot in time. Examine the slot number, and make sure that a module is in it. \\
+\addlinespace
+Scanner calls return \code{EIP_ERR_STATE} after an error & The session closed itself after a broken packet. Open it again. \\
+\addlinespace
+A scan finds nothing & Broadcasts do not cross routers or VLANs. Use \code{eip_list_identity} with an address. On Windows, also run a new program a second time (section~\ref{sec:windows}). \\
+\addlinespace
+A new Windows build times out on its first call & Security software can stop the first replies of a new executable. Run the program again. \\
+\end{longtable}
+
+\section{Common Mistakes}
+
+Table~\ref{tab:mistakes} lists the mistakes that cost the most time.
+
+\begin{table}[htbp]
+\centering
+\caption{Common mistakes}\label{tab:mistakes}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.24\linewidth}L@{}}
+\toprule
+\textbf{Area} & \textbf{Mistake and correction} \\
+\midrule
+Slot & A zeroed \code{EipOpenConfig} has slot 0, which routes across a backplane. Set \code{slot = -1} for a device that you reach directly. \\
+Sizes & Enter assembly bytes in an EDS file or a PLC. The 2-byte sequence count and the 4-byte run/idle header are added on the wire. \\
+Direction & Consumed is what the PLC writes. Produced is what the PLC reads. The test set uses 100 as consumed, the opposite of the examples. \\
+Class~1 address & Class~1 needs the address that the adapter reports. It fails on \code{127.0.0.1} and on other addresses of the same host. \\
+Lost connection & Recovery needs a new session also. \code{eip_session_is_open} does not find a lost peer. \\
+Configuration & The settings in \file{eip_config.h} change structure sizes. All C and C++ files must see the same values. \\
+Start order & Set \code{link_info} and the other configuration fields before \code{eip_adapter_start}, which copies them. \\
+Poll & Only poll-mode ports call \code{eip_adapter_poll}. Do not call it on an RTOS port. \\
+\bottomrule
+\end{tabularx}
+\end{table}

@@ -1,0 +1,398 @@
+\chapter{Implementing an Adapter}\label{ch:adapter}
+
+An adapter makes your device an EtherNet/IP I/O device. A PLC opens a Class~1
+connection to it and exchanges assembly data at a fixed interval, the RPI.
+This chapter tells you how to start the adapter, exchange data, and set the
+assemblies so that a PLC accepts them.
+
+\section{Assemblies}\label{sec:assemblies}
+
+An \term{assembly} is a block of bytes with an instance number. The adapter
+has three types of assembly. Table~\ref{tab:asmtypes} gives their directions.
+
+\begin{table}[htbp]
+\centering
+\caption{Assembly types}\label{tab:asmtypes}
+\begin{tabularx}{\linewidth}{@{}P{0.25\linewidth}P{0.14\linewidth}L@{}}
+\toprule
+\textbf{Type} & \textbf{Direction} & \textbf{Meaning} \\
+\midrule
+\code{EIP_ASM_CONSUMED} & \OT & Data that the PLC writes. Your application reads it. \\
+\code{EIP_ASM_PRODUCED} & \TO & Data that your application writes. The PLC reads it. \\
+\code{EIP_ASM_CONFIG} & In the Forward\_Open & Configuration data. Size 0 is permitted. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{caution}
+Do not mix up the two directions. Consumed is what the PLC writes, and
+produced is what the PLC reads. The built-in test set uses instance 100 as
+consumed. The examples in this manual use instance 100 as produced.
+\end{caution}
+
+You select the instance numbers. This manual uses 150 (consumed, 32 bytes),
+100 (produced, 32 bytes), and 151 (config, 0 bytes). If you give no
+configuration, the adapter uses a built-in test set (table~\ref{tab:testset}).
+
+\begin{table}[htbp]
+\centering
+\caption{The built-in test set (\code{config} or \code{assembly_count} is 0)}\label{tab:testset}
+\begin{tabularx}{\linewidth}{@{}P{0.14\linewidth}P{0.20\linewidth}P{0.12\linewidth}L@{}}
+\toprule
+\textbf{Instance} & \textbf{Direction} & \textbf{Bytes} & \textbf{Notes} \\
+\midrule
+100 & Consumed & 8 & \\
+101 & Produced & 8 & Initial data \code{11 22 33 44 55 66 77 88}. \\
+102 & Produced & 4 & \\
+150 & Config & 4 & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+With \code{vendor_id} 0, the adapter also uses a test identity: vendor 65000
+and product name ``EIP Test Adapter.''
+
+\section{Start the Adapter}\label{sec:start}
+
+\begin{procedure}{Start the built-in adapter}
+\begin{enumerate}
+  \item Declare an array of \code{EipAssemblyConfig}, one entry for each
+        assembly.
+  \item Declare an \code{EipAdapterConfig} and set all of it to zero with
+        \code{memset}.
+  \item Set the identity fields: \code{vendor_id}, \code{device_type},
+        \code{product_code}, \code{revision_major}, \code{revision_minor}, and
+        \code{product_name}.
+  \item Set \code{assemblies} and \code{assembly_count}.
+  \item Set the optional fields and callbacks (section~\ref{sec:callbacks}).
+  \item Call \code{eip_adapter_start}.
+  \item Make sure that the return value is \code{EIP_OK}.
+  \item On a poll-mode port only, call \code{eip_adapter_poll} on each pass
+        of the main loop.
+\end{enumerate}
+\end{procedure}
+
+\begin{lstlisting}
+#include <string.h>
+#include "eip.h"
+
+static const EipAssemblyConfig kAssemblies[] = {
+    /* instance, direction,   size, name,     initial, implicit_only */
+    {150, EIP_ASM_CONSUMED, 32, "Outputs", 0, 0},   /* O->T: the PLC writes it  */
+    {100, EIP_ASM_PRODUCED, 32, "Inputs",  0, 0},   /* T->O: we send it         */
+    {151, EIP_ASM_CONFIG,    0, "Config",  0, 0},   /* config point of the path */
+};
+
+int start_eip(void)
+{
+    EipAdapterConfig cfg;
+
+    memset(&cfg, 0, sizeof cfg);
+    cfg.vendor_id = 65000;            /* placeholder: use your ODVA vendor id */
+    cfg.device_type = 43;             /* 43 generic device, 12 comms adapter */
+    cfg.product_code = 1;
+    cfg.revision_major = 1;
+    cfg.revision_minor = 1;           /* an EDS needs 1 or higher */
+    cfg.product_name = "My Device";   /* up to 31 characters */
+    cfg.serial_number = 0;            /* 0: derived from the MAC */
+    cfg.assemblies = kAssemblies;
+    cfg.assembly_count = 3;
+    return eip_adapter_start(&cfg);   /* copies what it needs from cfg */
+}
+\end{lstlisting}
+
+\begin{caution}
+Set all fields of \code{EipAdapterConfig}, including \code{link_info} and the
+other callbacks, before you call \code{eip_adapter_start}. The function copies
+the configuration. A change after the call has no effect.
+\end{caution}
+
+\begin{note}
+\notelabel Vendor ID 65000 is a placeholder. Get your own vendor ID from
+ODVA, and use it in the device and in its EDS file.
+\end{note}
+
+\code{eip_adapter_start} copies what it needs, so \code{cfg} and the assembly
+array can be on the stack. The adapter listens on TCP 44818, UDP 44818, and
+UDP 2222. If the network is not ready, the adapter tries again to open its
+sockets one time each second. The field \code{listening} in
+\code{EipAdapterView} becomes 1 when the sockets are open.
+
+\section{Exchange Data}\label{sec:exchange}
+
+Use \code{eip_adapter_read} to get the data that the PLC sent. Use
+\code{eip_adapter_write} to set the data that the PLC receives.
+
+\begin{lstlisting}
+uint8_t out[32], in[32];
+uint16_t len = sizeof out;
+
+eip_adapter_read(150, out, &len);   /* latest data from the PLC          */
+/* ... use out, fill in ... */
+eip_adapter_write(100, in, 32);     /* sent on the next T->O packet      */
+\end{lstlisting}
+
+These rules apply:
+
+\begin{itemize}
+  \item The two calls are safe from any task.
+  \item \code{eip_adapter_write} needs the exact size of the assembly.
+  \item For \code{eip_adapter_read}, \code{data_len} is the capacity on input
+        and the byte count on output. A capacity smaller than the assembly is
+        \code{EIP_ERR_TOO_BIG}.
+  \item An unknown instance returns \code{EIP_ERR_PATH}.
+\end{itemize}
+
+\subsection{The Safe State of Consumed Data}\label{sec:safestate}
+
+The consumed assembly reads as all zeros in these conditions:
+
+\begin{itemize}
+  \item The connection timed out or closed.
+  \item The PLC is in Program mode. The run/idle header then says ``idle.''
+\end{itemize}
+
+Before the first connection, the consumed assembly reads as its
+\code{initial} data. That data is also zeros if you do not set it.
+Figure~\ref{fig:safestate} shows the states.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\sffamily\small,>=Stealth,
+  st/.style={draw=steel,fill=white,rounded corners=6pt,minimum width=3.3cm,text width=3.1cm,minimum height=1.25cm,align=center,line width=0.8pt},
+  zero/.style={st,fill=signal!6,draw=signal!70},
+  live/.style={st,fill=teal!12,draw=teal},
+  tr/.style={->,steel,line width=0.7pt},
+  lab/.style={font=\sffamily\scriptsize,inner sep=2pt,align=center,text=navy}]
+  \node[st] (init) at (0,0) {\textbf{No connection yet}\\\scriptsize reads \code{initial} data};
+  \node[live] (run) at (5.3,0) {\textbf{Connected, run}\\\scriptsize reads live PLC data};
+  \node[zero] (idle) at (11.6,0) {\textbf{Connected, idle}\\\scriptsize reads all zeros};
+  \node[zero] (closed) at (5.3,-3.6) {\textbf{Timed out or closed}\\\scriptsize reads all zeros};
+  \draw[tr] (init) -- node[lab,above]{Forward\_Open\\accepted} (run);
+  \draw[tr] ([yshift=3mm]run.east) -- node[lab,above]{header says idle} ([yshift=3mm]idle.west);
+  \draw[tr] ([yshift=-3mm]idle.west) -- node[lab,below]{header says run} ([yshift=-3mm]run.east);
+  \draw[tr] ([xshift=-7mm]run.south) -- node[lab,left]{timeout or\\Forward\_Close} ([xshift=-7mm]closed.north);
+  \draw[tr] ([xshift=7mm]closed.north) -- node[lab,right]{new\\Forward\_Open} ([xshift=7mm]run.south);
+  \draw[tr] (idle.south) |- node[lab,pos=0.25,right]{timeout or\\Forward\_Close} (closed.east);
+\end{tikzpicture}
+\caption{States of the consumed assembly. Red states read as all zeros. A
+modeless connection, which has no run/idle header, stays in ``run.''}
+\label{fig:safestate}
+\end{figure}
+
+\begin{warning}
+Design your application so that all-zero consumed data puts your machine
+in a safe condition. When the connection stops, or when the PLC goes to
+Program mode, your outputs see zeros. If zero is not a safe value for an
+output, add logic that makes it safe. Do not use this function as a safety
+function.
+\end{warning}
+
+\subsection{Status and Diagnostics}
+
+\code{eip_adapter_snapshot} copies the adapter state into an
+\code{EipAdapterView}. It gives the identity, the connection state, the RPI,
+the inactivity timeout, and these counters:
+
+\begin{itemize}
+  \item packets in and out, and successful opens and timeouts
+  \item drops by cause: old sequence number (\code{rx_dropped_seq}), wrong
+        source address (\code{rx_dropped_source}), and malformed packet
+        (\code{rx_dropped_bad})
+  \item packets accepted in idle (\code{rx_idle}), and UDP replies not sent
+        (\code{udp_replies_dropped})
+\end{itemize}
+
+Use these values on a status page. Appendix~\ref{app:types} lists all
+fields. The Identity object status word also shows the state:
+\hex{0034} with no connection, \hex{0065} in run, and \hex{0075} in idle.
+
+\section{Assemblies, Sizes, and the EDS File}\label{sec:sizes}
+
+The PLC sets up the connection from your EDS file. The adapter refuses a
+Forward\_Open that does not agree with its assemblies.
+
+\subsection{Assembly Size and Wire Size}
+
+In an EDS file and in PLC software, you enter the \emph{assembly} size. The
+2-byte sequence count and the 4-byte run/idle header are added on the wire.
+The adapter checks the wire size. Let $n$ be the assembly size in bytes, and
+let $h$ be 1 if the direction has a run/idle header, else 0. Then:
+\begin{align}
+  S_{\OT} &= 2 + 4h + n, \label{eq:o2t}\\
+  S_{\TO} &= 2 + n. \label{eq:t2o}
+\end{align}
+For a 32-byte assembly in each direction, $S_{\OT} = 38$ and $S_{\TO} = 34$.
+Figure~\ref{fig:o2t} shows where these bytes are in an \OT{} packet.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[font=\sffamily\scriptsize,
+  f/.style={draw=steel,minimum height=1.0cm,align=center,inner sep=1pt,fill=white},
+  g/.style={f,fill=steel!10},
+  c/.style={f,fill=teal!14,draw=teal},
+  d/.style={f,fill=teal!30,draw=teal}]
+  \def\u{0.36}
+  \node[g,minimum width=2*\u cm] (a) at (0,0) {Item\\count\\2};
+  \node[g,minimum width=2*\u cm,right=0pt of a] (b) {Type\\\texttt{8002}\\2};
+  \node[g,minimum width=2*\u cm,right=0pt of b] (c) {Len\\8\\2};
+  \node[g,minimum width=4*\u cm,right=0pt of c] (e) {Connection\\ID\\4};
+  \node[g,minimum width=4*\u cm,right=0pt of e] (h) {Sequence\\number\\4};
+  \node[g,minimum width=2*\u cm,right=0pt of h] (i) {Type\\\texttt{00B1}\\2};
+  \node[g,minimum width=2*\u cm,right=0pt of i] (j) {Len\\2};
+  \node[c,minimum width=2.6*\u cm,right=0pt of j] (k) {Seq.\\count\\2};
+  \node[c,minimum width=4*\u cm,right=0pt of k] (l) {Run/idle\\header\\4};
+  \node[d,minimum width=7*\u cm,right=0pt of l] (m) {Assembly data\\$n$};
+  \draw[decorate,decoration={brace,amplitude=4pt},steel] ([yshift=2pt]b.north west) -- node[above=4pt,align=center]{Sequenced Address item} ([yshift=2pt]h.north east);
+  \draw[decorate,decoration={brace,amplitude=4pt},steel] ([yshift=2pt]i.north west) -- node[above=4pt,align=center]{Connected Data item} ([yshift=2pt]m.north east);
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},teal] ([yshift=-2pt]k.south west) -- node[below=5pt,align=center]{Connection size in the Forward\_Open: $S_{\OT} = 2 + 4 + n$} ([yshift=-2pt]m.south east);
+  \node[anchor=north west,text=steel] at ([yshift=-2pt]a.south west) {Common Packet Format, UDP 2222};
+\end{tikzpicture}
+\caption{An \OT{} Class~1 packet with a run/idle header. Sizes are in bytes.
+A \TO{} packet has the same items but normally no run/idle header.}
+\label{fig:o2t}
+\end{figure}
+
+The run/idle header is a format flag in the EDS file. It is not part of the
+size that you enter.
+
+\subsection{Rules for a Forward\_Open}\label{sec:forwardopen}
+
+Table~\ref{tab:forwardopen} gives the rules that the adapter applies to a
+Forward\_Open, and the status that it returns when a rule is not met. The
+sizes in this table are wire sizes.
+
+\begin{table}[htbp]
+\centering
+\caption{Forward\_Open rules and the error status for each}\label{tab:forwardopen}
+\small
+\begin{tabularx}{\linewidth}{@{}LP{0.30\linewidth}@{}}
+\toprule
+\textbf{Rule} & \textbf{Status if not met} \\
+\midrule
+The connection path names an existing consumed, produced, and config instance. & \hex{01} / \hex{012A} (consumed), \hex{012B} (produced), \hex{0129} (config) \\
+\OT{} size $= 2 + 4h + n$ (equation~\ref{eq:o2t}). & \hex{01} / \hex{0127} \\
+\TO{} size $= 2 + n$. If the size also includes a 4-byte header, the adapter accepts it and sends a header that always says ``run.'' & \hex{01} / \hex{0128} \\
+Config data in the path, if any, is equal to the config assembly size. & \hex{01} / \hex{0126} \\
+The electronic key, if the PLC checks it, agrees with the vendor, device type, product code, and revision. A zero in the key agrees with all values. & \hex{01} / \hex{0114}--\hex{0116} \\
+No other originator owns the connection. & \hex{01} / \hex{0106}, or \hex{01} / \hex{0113} if the request has no \OT \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+A size-0 \code{EIP_ASM_CONFIG} assembly accepts a path with a config point
+and no data. Most PLCs send that. Set \code{implicit_only} to 1 to hide an
+assembly from explicit Get and Set (status \hex{16}). Class~1 can still use
+that assembly.
+
+\subsection{The Inactivity Timeout}\label{sec:timeout}
+
+The adapter closes the connection if no valid \OT{} packet arrives in the
+inactivity timeout. The timeout comes from the \OT{} RPI and the timeout
+multiplier $m$ (0--7) in the Forward\_Open.\footnote{ODVA, \textit{The CIP
+Networks Library}, vol.~1, \textit{Common Industrial Protocol}, chap.~3,
+Connection Manager object.} Let $T_{\text{f}}$ be
+\code{timeout_floor_ms} and let $\Delta$ be the clock resolution of the port:
+\begin{equation}
+  T_{\text{inactivity}} = \max\!\left(\text{RPI}_{\OT} \cdot 4 \cdot 2^{m},\;
+  T_{\text{f}},\; 2\Delta\right).
+  \label{eq:timeout}
+\end{equation}
+The result is rounded up to whole ticks. In ticks, it is also limited to
+\hex{00FFFFFF}. For example, a Micro850 sends an RPI of 50~ms with $m = 0$,
+so $T_{\text{inactivity}} = 50 \times 4 = 200$~ms. A multiplier of 2 with a
+10~ms RPI gives $10 \times 16 = 160$~ms.
+
+\begin{note}
+\notelabel On a platform that is not real time, such as Windows, set
+\code{timeout_floor_ms} to 500 or more. A 100~ms stall of the host then does
+not close the connection.
+\end{note}
+
+\subsection{Multicast \TO}
+
+If the PLC requests a multicast \TO{} connection, the adapter selects the
+group address from its own IP address $a$ and its network mask $k$, as the
+EtherNet/IP specification tells.\footnote{ODVA, \textit{The CIP Networks
+Library}, vol.~2, \textit{EtherNet/IP Adaptation of CIP}, sec.~3-5.3.} Let the
+host ID be $h = a \wedge \lnot k$. Then:
+\begin{equation}
+  A_{\text{mcast}} = 239.192.1.0 + 32 \cdot \bigl((h - 1) \wedge \hex{3FF}\bigr).
+\end{equation}
+Multicast does not let a second originator listen. The adapter still accepts
+one Class~1 connection only.
+
+\section{Optional Callbacks}\label{sec:callbacks}
+
+Table~\ref{tab:callbacks} lists the callbacks in \code{EipAdapterConfig}. All
+of them run in the adapter context, the task or \code{eip_adapter_poll}. Each
+receives \code{callback_ctx} as its first argument.
+
+\begin{table}[htbp]
+\centering
+\caption{Adapter callbacks}\label{tab:callbacks}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.17\linewidth}P{0.27\linewidth}L@{}}
+\toprule
+\textbf{Field} & \textbf{When it is called} & \textbf{Use} \\
+\midrule
+\code{link_info} & Each 100 ms & Gives link state, speed, and duplex for the Ethernet Link object, if the port cannot read them (ESP-IDF). Return 1 while the link is up, and 0 to report it down. \\
+\code{apply_interface} & Approximately 150 ms after a scanner sets TCP/IP Interface attribute 3, 5, or 6. The reply has already gone out. & Store and apply the new IP settings. Set it to 0 to make those attributes read-only. \\
+\code{reset} & Approximately 300 ms after an Identity Reset request & Restart (type 0), or set the factory settings and restart (type 1). Set it to 0 to refuse the service. \\
+\code{allow_change} & Before the adapter accepts a TCP/IP Interface Set or an Identity Reset & Return 0 to permit the change. Return a CIP general status, usually \hex{10} (device state conflict), to refuse it. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{warning}
+A scanner on the network can send an Identity Reset or change the IP address
+of your device. If your device controls machinery, supply
+\code{allow_change}. Make it refuse these requests while the machinery can
+move.
+\end{warning}
+
+\begin{caution}
+\code{allow_change} runs while the adapter holds \code{eip_hal_lock}. Keep it
+short. Do not call an \code{eip_adapter_*} function from it, because that
+function also takes the lock.
+\end{caution}
+
+A request that \code{allow_change} refuses never gets to
+\code{apply_interface} or \code{reset}.
+
+\section{More Control: The EipServer API}\label{sec:eipserver}
+
+The functions \code{eip_adapter_*} use one built-in instance of
+\code{EipServer}. The header \file{eip_server.h} gives access to that type.
+Use it for these tasks:
+
+\begin{itemize}
+  \item Put the 11~KB server in memory that you select.
+  \item Run the loop from your own task.
+  \item Stop the adapter and start it again.
+\end{itemize}
+
+\begin{lstlisting}
+static EipServer server;
+
+eip_server_init(&server, &config);
+for (;;) {
+    eip_server_service(&server, 5);   /* RTOS task: waits up to 5 ms */
+}
+/* bare metal: call eip_server_poll(&server) from the main loop instead */
+\end{lstlisting}
+
+\code{eip_server_init}, \code{eip_server_poll}, \code{eip_server_service},
+and \code{eip_server_close} run in one context. \code{eip_server_read},
+\code{eip_server_write}, and \code{eip_server_snapshot} are safe from any
+task, because they take \code{eip_hal_lock}.
+
+\subsection{The Sans-I/O Core}
+
+The header \file{eip_adapter.h} gives the core under the server. The core
+never uses a socket or a clock. You give it packets and a tick count, and you
+send the packets that it returns. Use it only if you write your own event
+loop. The core has one shared reply buffer. Thus you must serialize the calls
+on all \code{EipAdapter} objects in a program. Appendix~\ref{app:api} lists
+its functions.

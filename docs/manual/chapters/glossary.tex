@@ -1,0 +1,62 @@
+\chapter{Glossary}
+\markboth{Glossary}{Glossary}
+
+\newcommand{\gl}[2]{\item[#1] #2}
+
+\begin{description}[style=nextline,leftmargin=1.2em,font=\sffamily\bfseries\color{navy}]
+\gl{Adapter}{A device that a PLC sees as an I/O device. It is the target of a
+Class~1 connection. Also called the target.}
+\gl{Assembly}{A block of data with an instance number in the Assembly object
+(\hex{04}). Assemblies are consumed, produced, or config.}
+\gl{Class 1 connection}{An implicit (I/O) connection that sends assembly
+data on UDP 2222 at a fixed interval. A Forward\_Open over TCP opens it.}
+\gl{CIP}{Common Industrial Protocol. The object model and services that
+EtherNet/IP carries. CIP is a trademark of ODVA.}
+\gl{Consumed assembly}{An assembly that the adapter receives from the PLC
+(\OT).}
+\gl{EDS file}{Electronic Data Sheet. A text file that tells PLC software the
+identity, assemblies, and connections of a device.}
+\gl{Electronic key}{Identity values in a Forward\_Open that the target compares
+with its own values.}
+\gl{Encapsulation}{The EtherNet/IP header around each CIP message on TCP or UDP
+44818.}
+\gl{Explicit message}{A request and reply message, for example
+Get\_Attribute\_Single. QuickEIP sends them unconnected, with SendRRData.}
+\gl{Forward\_Open}{The Connection Manager service that opens a connection.
+Forward\_Close closes it.}
+\gl{HAL}{Hardware abstraction layer. In QuickEIP, the 19 port functions in
+\file{eip_hal.h}.}
+\gl{Inactivity timeout}{The time after which the target closes a connection if
+no valid \OT{} packet arrives. See equation~\ref{eq:timeout}.}
+\gl{ListIdentity}{An encapsulation command that asks a device for its identity.
+A scan sends it as a broadcast.}
+\gl{Modeless}{A connection direction without a run/idle header.}
+\gl{Multicast}{A \TO{} connection that sends to an IP group address, not to
+one host.}
+\gl{\OT}{Originator to target: the direction from the PLC or scanner to the
+adapter.}
+\gl{Originator}{The device that opens a connection, usually a PLC or a
+scanner.}
+\gl{PLC}{Programmable logic controller.}
+\gl{Poll mode}{A port without tasks. The application calls
+\code{eip_adapter_poll} from its main loop.}
+\gl{Port}{The platform-specific code that implements \file{eip_hal.h}.}
+\gl{Produced assembly}{An assembly that the adapter sends to the PLC (\TO).}
+\gl{RPI}{Requested packet interval. The time between two Class~1 packets in
+one direction.}
+\gl{Run/idle header}{A 4-byte header before \OT{} data. Bit 0 is 1 in run and
+0 in idle (Program mode).}
+\gl{Sans-I/O}{A design in which the protocol code does not use sockets or a
+clock. The caller supplies packets and the time.}
+\gl{Scanner}{A device that opens sessions and connections to other devices.
+In QuickEIP, the originator role.}
+\gl{Session}{A TCP connection on port 44818 with a registered session handle.}
+\gl{Slot}{The position of a module in a ControlLogix chassis. The scanner uses
+it to route a request across the backplane.}
+\gl{\TO}{Target to originator: the direction from the adapter to the PLC or
+scanner.}
+\gl{Target}{The device that accepts a connection. In QuickEIP, the adapter
+role.}
+\gl{Unconnected Send}{A Connection Manager service that routes a message
+through a router to another port or slot.}
+\end{description}

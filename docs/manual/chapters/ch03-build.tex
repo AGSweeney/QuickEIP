@@ -1,0 +1,219 @@
+\chapter{Building and Configuring QuickEIP}\label{ch:build}
+
+\section{Build-Time Configuration}\label{sec:config}
+
+All sizes are in \file{include/eip_config.h}. Each setting is a default in an
+\code{\#ifndef} block. You can change a setting in two ways:
+
+\begin{itemize}
+  \item Give it with \code{-D} on the compiler command line.
+  \item Put it in a header of your own, and compile with
+        \code{-DEIP_CONFIG_FILE=\textbackslash"my_eip_config.h\textbackslash"}.
+        \file{eip_config.h} includes that file first.
+\end{itemize}
+
+\begin{caution}
+All files that include \file{eip.h} must see the same values, in C and in
+C++. These settings change the size of structures. If two files see different
+values, they disagree about the layout of \code{EipSession} or
+\code{EipServer}, and memory becomes corrupt. Put the settings in a flag that
+applies to the C and the C++ compiler, or use \code{EIP_CONFIG_FILE} for
+both.
+\end{caution}
+
+\begin{procedure}{Change a build-time setting}
+\begin{enumerate}
+  \item Make a header, for example \file{my_eip_config.h}.
+  \item Put one \code{\#define} in it for each setting that you change:
+\begin{lstlisting}
+/* my_eip_config.h */
+#define EIP_ADAPTER_MAX_CLIENTS 2
+#define EIP_ADAPTER_DATA_POOL   1024
+\end{lstlisting}
+  \item Add \code{-DEIP_CONFIG_FILE=\textbackslash"my_eip_config.h\textbackslash"}
+        to the C compiler flags.
+  \item Add the same flag to the C++ compiler flags.
+  \item Do a clean build of all files.
+\end{enumerate}
+\end{procedure}
+
+Table~\ref{tab:config} lists the settings.
+
+\begin{table}[htbp]
+\centering
+\caption{Build-time settings in \file{eip_config.h}}\label{tab:config}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.36\linewidth}P{0.12\linewidth}L@{}}
+\toprule
+\textbf{Setting} & \textbf{Default} & \textbf{Effect} \\
+\midrule
+\code{EIP_MAX_PACKET} & 1536 & Largest encapsulation packet. The minimum is 1024, and a smaller value stops the build. It sizes the session buffers (3$\times$), the server reply buffers (2$\times$), and each adapter TCP client (1$\times$). \\
+\code{EIP_ADAPTER_MAX_ASSEMBLIES} & 8 & Assembly instances in each adapter. \\
+\code{EIP_ADAPTER_DATA_POOL} & 512 & Bytes that all assembly data shares. \\
+\code{EIP_ADAPTER_MAX_CLIENTS} & 4 & Explicit-message (TCP) sessions at the same time. Each costs approximately \code{EIP_MAX_PACKET} bytes. \\
+\code{EIP_ADAPTER_EVICT_MS} & 60000 & If all TCP slots are busy, the adapter drops a session that has been silent this long, for a new client. It never drops the session of the Class~1 owner. \\
+\code{EIP_ADAPTER_UDP_REPLY_MS} & 20 & Interval at which the UDP 44818 rate limit adds one token. \\
+\code{EIP_ADAPTER_UDP_REPLY_BURST} & 20 & Maximum number of stored tokens. \\
+\code{EIP_ADAPTER_IDLE_WAIT_MS} & 5 & Longest wait in one call to \code{eip_server_service}. \\
+\code{EIP_ADAPTER_TASK_STACK} & 0 & Adapter task stack, in the units of the RTOS. 0 selects the port default. \\
+\code{EIP_ADAPTER_TASK_PRIORITY} & 0 & Adapter task priority, in the units of the RTOS. 0 selects the port default. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{The UDP Reply Rate Limit}
+
+The adapter answers ListIdentity and ListServices on UDP 44818 through a
+token bucket. Each reply uses one token. Let $R$ be
+\code{EIP_ADAPTER_UDP_REPLY_MS} and let $B$ be
+\code{EIP_ADAPTER_UDP_REPLY_BURST}. Then, in a time $t$, the adapter sends no
+more than this number of replies:
+\begin{equation}
+  n_{\max}(t) = B + \left\lfloor \frac{t}{R} \right\rfloor.
+\end{equation}
+With the defaults, the adapter answers a burst of 20 requests and then 50
+requests per second. A broadcast storm thus cannot stop Class~1 I/O. The
+snapshot field \code{udp_replies_dropped} counts the requests that the
+adapter did not answer.
+
+\subsection{Task Settings}
+
+The two task settings have a meaning on some ports only.
+Table~\ref{tab:tasksettings} shows which.
+
+\begin{table}[htbp]
+\centering
+\caption{Use of the task settings by port}\label{tab:tasksettings}
+\begin{tabularx}{\linewidth}{@{}P{0.22\linewidth}P{0.30\linewidth}L@{}}
+\toprule
+\textbf{Port} & \textbf{\code{EIP_ADAPTER_TASK_STACK}} & \textbf{\code{EIP_ADAPTER_TASK_PRIORITY}} \\
+\midrule
+ESP-IDF & Bytes (default 6144) & FreeRTOS priority (default 12) \\
+NetBurner & Not used (NNDK default stack) & NBRTOS priority (default \code{MAIN_PRIO - 1}) \\
+Windows & Bytes (0: system default) & A \code{THREAD_PRIORITY_*} value (0: \code{THREAD_PRIORITY_HIGHEST}) \\
+POSIX & Not used & Not used \\
+ClearCore & Not used (no task) & Not used (no task) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Host Build}\label{sec:hostbuild}
+
+The host build uses CMake. It needs CMake 3.13 or later and a C99 compiler. It
+operates on Linux, macOS, WSL, and Windows with Visual Studio.
+
+\begin{procedure}{Build and test on Linux, macOS, or WSL}
+\begin{enumerate}
+  \item Go to the root of the repository.
+  \item Configure the build:
+\begin{lstlisting}[language=shell]
+cmake -S . -B build
+\end{lstlisting}
+  \item Compile:
+\begin{lstlisting}[language=shell]
+cmake --build build
+\end{lstlisting}
+  \item Run the tests:
+\begin{lstlisting}[language=shell]
+ctest --test-dir build --output-on-failure
+\end{lstlisting}
+  \item Make sure that all tests pass.
+\end{enumerate}
+\end{procedure}
+
+\begin{procedure}{Build and test on Windows with Visual Studio}
+\begin{enumerate}
+  \item Open a Developer Command Prompt at the root of the repository.
+  \item Configure the build:
+\begin{lstlisting}[language=shell]
+cmake -S . -B build
+\end{lstlisting}
+  \item Compile the Release configuration:
+\begin{lstlisting}[language=shell]
+cmake --build build --config Release
+\end{lstlisting}
+  \item Run the tests:
+\begin{lstlisting}[language=shell]
+ctest --test-dir build -C Release --output-on-failure
+\end{lstlisting}
+  \item Make sure that all tests pass.
+\end{enumerate}
+\end{procedure}
+
+\subsection{Targets and Options}
+
+Table~\ref{tab:targets} lists the CMake targets. Two options control the
+optional targets: \code{QUICKEIP_BUILD_TESTS} and \code{QUICKEIP_BUILD_TOOLS}.
+Both are \code{ON} by default.
+
+\begin{table}[htbp]
+\centering
+\caption{CMake targets}\label{tab:targets}
+\begin{tabularx}{\linewidth}{@{}P{0.32\linewidth}L@{}}
+\toprule
+\textbf{Target} & \textbf{Contents} \\
+\midrule
+\code{quickeip_core} & The portable core only. Link your own \code{eip_hal_*} port. \\
+\code{quickeip} & The core plus the host port (POSIX or Windows). \\
+\code{eiptool} & The command-line tool. Set \code{-DQUICKEIP_BUILD_TOOLS=OFF} to omit it. \\
+\code{test_core}, \code{test_session}, \code{test_hal}, \code{test_loopback} & The tests. Set \code{-DQUICKEIP_BUILD_TESTS=OFF} to omit them. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Tests}\label{sec:tests}
+
+Table~\ref{tab:tests} describes each test and what it needs.
+
+\begin{table}[htbp]
+\centering
+\caption{Tests}\label{tab:tests}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.16\linewidth}LP{0.25\linewidth}@{}}
+\toprule
+\textbf{Test} & \textbf{Covers} & \textbf{Needs} \\
+\midrule
+\code{test_core} & The codec and the adapter core, byte for byte. Includes Forward\_Open captures from real devices. & Nothing: no sockets and no clock. \\
+\code{test_session} & The scanner session against a scripted device, through a fake HAL. Routed requests, router failures, and late, short, and too-large replies. & Nothing: no sockets and no clock. \\
+\code{test_hal} & The port contract, through the loopback interface of the host. Busy ports fail, long datagrams are cut, ICMP errors are not fatal, timeouts hold, and the clock steps at its stated resolution. & Free TCP and UDP ports in the 478xx range. \\
+\code{test_loopback} & The scanner against the adapter through the host port. Discovery, explicit messages, Class~1 in the two directions, idle, the watchdog, and reopen. & A non-loopback interface. TCP and UDP 44818 and UDP 2222 must be free. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{note}
+\notelabel If another EtherNet/IP program on the host uses port 44818 or 2222,
+\code{test_loopback} fails. Stop that program, and then run the test again.
+\end{note}
+
+\section{Use QuickEIP in Your Own CMake Project}\label{sec:owncmake}
+
+\begin{procedure}{Add QuickEIP to a CMake project}
+\begin{enumerate}
+  \item Put the QuickEIP repository beside your project, or in a
+        subdirectory of it.
+  \item Set the two build options to \code{OFF} before
+        \code{add_subdirectory}. If you do not, the tests and
+        \code{eiptool} also compile.
+  \item Add QuickEIP with \code{add_subdirectory}.
+  \item Link your target to \code{quickeip}. This gives the include paths
+        and the thread library.
+\end{enumerate}
+\end{procedure}
+
+\begin{lstlisting}[language=cmake]
+cmake_minimum_required(VERSION 3.13)
+project(myapp C)
+
+set(QUICKEIP_BUILD_TESTS OFF CACHE BOOL "")
+set(QUICKEIP_BUILD_TOOLS OFF CACHE BOOL "")
+add_subdirectory(../QuickEIP quickeip)
+
+add_executable(myapp main.c)
+target_link_libraries(myapp PRIVATE quickeip)
+\end{lstlisting}
+
+For an embedded target without CMake, compile the core files of
+table~\ref{tab:groups} and one port, and add \file{include/} and \file{src/}
+to the include paths. Chapter~\ref{ch:platforms} gives the steps for each
+shipped platform.

@@ -1,0 +1,184 @@
+\chapter{Connecting a PLC to the Adapter}\label{ch:plc}
+
+This chapter tells you how to make an EDS file for your adapter and how to
+connect a PLC to it. Do the checks in section~\ref{sec:precheck} before you
+start the PLC software.
+
+\section{Checks Before You Use the PLC}\label{sec:precheck}
+
+\begin{procedure}{Check the adapter from a PC}
+\begin{enumerate}
+  \item Connect a PC to the same network as the adapter.
+  \item Build \code{eiptool} on the PC (section~\ref{sec:hostbuild}).
+  \item Read the identity of the adapter:
+\begin{lstlisting}[language=shell]
+eiptool identity <adapter-ip>
+\end{lstlisting}
+  \item Make sure that the vendor, product code, and name are correct.
+  \item Read the data of the produced assembly:
+\begin{lstlisting}[language=shell]
+eiptool get <adapter-ip> 4 100 3
+\end{lstlisting}
+  \item Make sure that the byte count is equal to the assembly size.
+\end{enumerate}
+\end{procedure}
+
+\section{Make the EDS File}\label{sec:eds}
+
+The file \file{examples/eds/QuickEIP_Adapter.eds} agrees with the assemblies
+in section~\ref{sec:start}. Use it as the start for your EDS file.
+Table~\ref{tab:edsfields} shows which values must agree with your
+configuration.
+
+\begin{table}[htbp]
+\centering
+\caption{EDS fields and the configuration values that they must agree with}\label{tab:edsfields}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.38\linewidth}L@{}}
+\toprule
+\textbf{EDS field} & \textbf{Must be equal to} \\
+\midrule
+\code{VendCode}, \code{ProdType}, \code{ProdCode} & \code{vendor_id}, \code{device_type}, \code{product_code} \\
+\code{MajRev}, \code{MinRev} & \code{revision_major}, \code{revision_minor}. EDS tools need 1--255, so do not use a minor revision of 0. \\
+\code{ProdName} & \code{product_name} \\
+\code{VendName}, \code{Catalog} & Your company and your part number. No configuration field agrees with these. \\
+\code{Assem}\textit{NNN}, its size, and its member size in bits & An \code{EipAssemblyConfig} instance, its \code{size}, and \code{size} $\times$ 8 \\
+Connection sizes, \code{TSpec1}, \code{TSpec2} & The assembly sizes (not the wire sizes) \\
+\code{Number_Of_Static_Instances} under \code{[Assembly]} & \code{assembly_count} \\
+Connection path & \code{20 04 24} \textit{config} \code{2C} \textit{consumed} \code{2C} \textit{produced}, with instances in hexadecimal, for instances up to 255 \\
+Assembly path & \code{20 04 24} \textit{instance} \code{30 03}, with the instance in hexadecimal \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For the example assemblies, config 151 is \hex{97}, consumed 150 is \hex{96},
+and produced 100 is \hex{64}. Thus the connection path is
+\code{20 04 24 97 2C 96 2C 64}.
+
+\begin{procedure}{Adapt the sample EDS file}
+\begin{enumerate}
+  \item Copy \file{examples/eds/QuickEIP_Adapter.eds} and give the copy a new name.
+  \item Set the \code{[Device]} values from table~\ref{tab:edsfields}.
+  \item Set each \code{Assem}\textit{NNN} entry to agree with one assembly.
+  \item Set the connection sizes and \code{TSpec1} and \code{TSpec2} to the assembly sizes.
+  \item Set the connection path to your config, consumed, and produced instances.
+  \item Do not change the other values.
+  \item Do the checks of section~\ref{sec:precheck} again.
+\end{enumerate}
+\end{procedure}
+
+\begin{caution}
+When an assembly layout changes, also change \code{ProdCode} or the revision.
+If you do not, a PLC can use an old EDS file with the new device, and the
+data has a different meaning.
+\end{caution}
+
+\begin{note}
+\notelabel The connection values in the sample file were checked: they opened
+a connection to a running adapter. But nobody has imported the file itself
+into PLC software yet.
+\end{note}
+
+Appendix~\ref{app:tools} contains the important parts of the sample file.
+
+\section{Micro850 (Connected Components Workbench)}
+
+This setup was tested with the ClearCore port.
+
+\begin{procedure}{Connect a Micro850}
+\begin{enumerate}
+  \item In Connected Components Workbench, add a generic EtherNet/IP device.
+  \item Set its address to the address of the adapter.
+  \item Set the output assembly (\OT) to instance 150, 32 bytes.
+  \item Set the input assembly (\TO) to instance 100, 32 bytes.
+  \item Set the config assembly to instance 151, 0 bytes.
+  \item Download the project to the controller.
+  \item Put the controller in Run mode.
+  \item On the adapter, make sure that \code{io_open} and \code{run} are 1 in
+        the snapshot.
+\end{enumerate}
+\end{procedure}
+
+Table~\ref{tab:micro850} shows the values that a Micro850 was seen to send.
+
+\begin{table}[htbp]
+\centering
+\caption{Connection values sent by a Micro850}\label{tab:micro850}
+\begin{tabularx}{\linewidth}{@{}P{0.32\linewidth}L@{}}
+\toprule
+\textbf{Setting} & \textbf{Value} \\
+\midrule
+RPI & 50 ms in each direction \\
+\OT & Point-to-point, with the run/idle header \\
+\TO & No header \\
+Timeout multiplier & 0 ($\times$4, thus 200 ms at a 50 ms RPI) \\
+Electronic key & All zeros \\
+Config & Names the config instance and sends no data \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The config instance must exist. If it does not, the adapter refuses the open
+with \hex{01} / \hex{0129}. A size-0 \code{EIP_ASM_CONFIG} assembly is
+sufficient.
+
+\section{CompactLogix and ControlLogix (Studio 5000)}
+
+This adapter has not been tested with these controllers. But an EDS file with
+the same connection values, and generic module settings in this form, have
+operated on a CompactLogix with a different adapter.
+
+You can install the EDS file with the \menu{EDS Hardware Installation Tool}
+and add the device as a module. Or you can add a \menu{Generic Ethernet
+Module} with the values in table~\ref{tab:generic}.
+
+\begin{table}[htbp]
+\centering
+\caption{Generic Ethernet Module settings}\label{tab:generic}
+\begin{tabularx}{\linewidth}{@{}P{0.32\linewidth}L@{}}
+\toprule
+\textbf{Field} & \textbf{Value} \\
+\midrule
+\menu{Comm Format} & Data -- SINT \\
+\menu{IP Address} & The address of the adapter \\
+\menu{Input} & Assembly instance 100, size 32 \\
+\menu{Output} & Assembly instance 150, size 32 \\
+\menu{Configuration} & Assembly instance 151, size 0 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Then set the RPI on the \menu{Connection} tab. In the two methods, the config
+assembly must exist on the adapter, also at size 0. It comes first in the
+connection path.
+
+\section{Adapter on a PC (POSIX or Windows Port)}
+
+This setup has not been tested with a PLC.
+
+\begin{procedure}{Prepare a PC adapter for a PLC}
+\begin{enumerate}
+  \item In the firewall, open TCP 44818, UDP 44818, and UDP 2222.
+  \item If the PC has more than one interface, set \code{EIP_NETIF} to the
+        interface that the PLC uses.
+  \item Under WSL2, use mirrored networking.
+  \item Set the RPI in the PLC to 50 ms or more.
+  \item Set \code{timeout_floor_ms} to 500 or more.
+\end{enumerate}
+\end{procedure}
+
+A PC has less regular timing than an embedded target. Thus start with a
+longer RPI.
+
+\section{Rules for All PLCs}
+
+\begin{itemize}
+  \item The adapter accepts one Class~1 connection at a time. It refuses a
+        second originator.
+  \item Keep the RPI much longer than the clock step of your port. On a
+        NetBurner at 20 Hz, use 50 ms or more (section~\ref{sec:netburner}).
+  \item If the PLC shows a fault, find the status in
+        table~\ref{tab:forwardopen}. \code{16\#0127} and \code{16\#0128} are
+        size errors.
+  \item Outputs read as zeros while the PLC is in Program mode.
+\end{itemize}

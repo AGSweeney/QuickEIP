@@ -1,0 +1,178 @@
+\chapter{Introduction to QuickEIP}\label{ch:intro}
+
+\section{What QuickEIP Is}
+
+QuickEIP is a small EtherNet/IP stack for embedded targets. It is written in
+portable C99 and released under the MIT License. Version~\swversion{} runs on
+NetBurner, ESP32, Teknic ClearCore, desktop Linux, macOS, and Windows.
+
+The stack has two roles, and one program can use both at the same time:
+
+\begin{description}[font=\sffamily\bfseries\color{navy}]
+  \item[Scanner (originator)] Your program opens a session to a PLC or a
+        device. It sends explicit messages, reads and writes Logix tags, and
+        opens Class~1 I/O connections.
+  \item[Adapter (target)] Your device answers the network as an I/O device.
+        A PLC opens a Class~1 connection to it and exchanges assembly data at
+        a fixed interval.
+\end{description}
+
+\section{Design Principles}
+
+Three rules control the design. They make the stack small, easy to port, and
+easy to test.
+
+\begin{enumerate}
+  \item \textbf{No dynamic memory in the protocol code.} All sizes are set at
+        build time in \file{include/eip_config.h}. The RAM that QuickEIP uses
+        is known before the program runs.
+  \item \textbf{No operating system calls in the protocol code.} A port of 19
+        functions supplies the clock, a lock, interface data, and
+        non-blocking sockets. The port contract is in \file{include/eip_hal.h}.
+  \item \textbf{A sans-I/O adapter core.} The adapter core receives packets
+        and a tick count, and it returns packets. Thus you can test it without
+        a network, byte for byte.
+\end{enumerate}
+
+\section{Scanner Functions}
+
+Table~\ref{tab:scanner-features} lists what the scanner does.
+
+\begin{table}[htbp]
+\centering
+\caption{Scanner functions}\label{tab:scanner-features}
+\begin{tabularx}{\linewidth}{@{}P{0.22\linewidth}L@{}}
+\toprule
+\textbf{Function} & \textbf{Details} \\
+\midrule
+Sessions & Encapsulation session on TCP 44818. All explicit messages use
+SendRRData (unconnected). \\
+Explicit messages & Any service with \code{eip_cip}, plus helpers for
+Get\_Attribute\_Single and Set\_Attribute\_Single. Requests up to 480 bytes. \\
+Routing & Direct, or one hop across a ControlLogix backplane with
+Unconnected Send (\code{slot} 0--255). Tested against scripted replies, but
+not yet on a real ControlLogix. \\
+Logix tags & Read and write by name, for example
+\code{Program:Main.Speed} or \code{Data[2,3].Value}. The scanner breaks large
+transfers into fragments. Data stays as raw little-endian bytes. \\
+Symbol list & Tag list from the Symbol object, on Micro800 and Logix. \\
+Class~1 I/O & Forward\_Open as an originator, point-to-point, with an
+optional run/idle header. Assemblies up to 600 bytes. Your application sets
+the packet interval. \\
+Discovery & ListIdentity to one address, or a broadcast scan on all
+interfaces. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Adapter Objects and Services}
+
+Table~\ref{tab:adapter-objects} lists the CIP objects of the adapter.
+
+\begin{table}[htbp]
+\centering
+\caption{CIP objects of the adapter}\label{tab:adapter-objects}
+\begin{tabularx}{\linewidth}{@{}P{0.30\linewidth}L@{}}
+\toprule
+\textbf{CIP object} & \textbf{Support} \\
+\midrule
+Identity (\hex{01}) & Attributes 1--8 and Get\_Attributes\_All. Reset
+(types 0 and 1) if the application supplies a callback. \\
+Message Router (\hex{02}) & Multiple Service Packet. \\
+Assembly (\hex{04}) & Up to eight instances by default, from a shared data
+pool. Get and Set of the data attribute, and of the size. \\
+Connection Manager (\hex{06}) & Forward\_Open, Large\_Forward\_Open, and
+Forward\_Close. \\
+TCP/IP Interface (\hex{F5}) & Read-only by default. Attributes 3, 5, and 6
+become settable if the application supplies a callback. \\
+Ethernet Link (\hex{F6}) & Three read-only instances: the port in use, a
+second port that always reports ``down,'' and an internal port. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The adapter also supplies these functions:
+
+\begin{itemize}
+  \item ListIdentity and ListServices on TCP and UDP 44818, with a rate
+        limit on UDP replies. ListInterfaces, RegisterSession, and SendRRData
+        on TCP.
+  \item Class~1 I/O on UDP 2222, with point-to-point or multicast \TO, and an
+        optional run/idle header on \OT.
+  \item An inactivity watchdog, checks of the sequence number and of the
+        source address, and a defined safe state. Consumed data reads as zeros
+        after a timeout, after a close, and in idle.
+  \item An \code{allow_change} callback that can refuse an IP change or a
+        reset, for example while machinery moves.
+\end{itemize}
+
+\section{Supported Platforms}\label{sec:platforms-summary}
+
+Table~\ref{tab:platforms} lists the shipped ports and their test status. The
+``Verified'' column tells you exactly what was done. ``Builds'' means that the
+code compiles and links. It does not mean that the port has run on a network.
+
+\begin{table}[htbp]
+\centering
+\caption{Platforms and test status}\label{tab:platforms}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.17\linewidth}P{0.22\linewidth}P{0.17\linewidth}L@{}}
+\toprule
+\textbf{Platform} & \textbf{Port} & \textbf{Adapter runs in} & \textbf{Verified} \\
+\midrule
+NetBurner NNDK 3.x & \file{ports/netburner} & Its own task & Builds (NNDK 3.5.8, MODM7AE70). Not yet run on hardware. \\
+ESP-IDF 5.x (ESP32) & \file{ports/esp-idf} + \file{ports/bsd_sockets} & Its own task & Builds (IDF 5.5.1, esp32). Not yet run on hardware. \\
+Teknic ClearCore & \file{ports/clearcore} + \file{ports/lwip_raw} & \code{eip_adapter_poll} in the main loop & Builds and links (Enhanced ClearCore Library, arm-gcc 6.3). The adapter has run on hardware with a Micro850 PLC. \\
+Linux, WSL, macOS & \file{ports/posix} + \file{ports/bsd_sockets} & A thread & Unit and loopback tests pass, also under ASan and UBSan (gcc 13.3, Ubuntu 24.04 on WSL2). \\
+Windows 7 and later & \file{ports/windows} & A thread, or \code{eip_adapter_poll} with \code{EIP_WIN_POLL_MODE} & Unit, port-contract, and loopback tests pass (Visual Studio 2022, x64 and Win32). Explicit scanner calls checked against a Micro850. Adapter not yet tested from a real PLC. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Limitations}\label{sec:limits}
+
+Compare these limits with the needs of your application before you select
+QuickEIP.
+
+\subsection{Adapter Limits}
+
+\begin{itemize}
+  \item The adapter accepts one Class~1 connection at a time. It refuses a
+        second originator, also when \TO{} is multicast. Thus listen-only
+        connections are not available.
+  \item The adapter has no Class~3 connections. Explicit messages are
+        unconnected only.
+  \item The adapter has no Unconnected Send, so it cannot route.
+  \item The \TO{} connection uses cyclic production. The adapter accepts a
+        change-of-state request, but it produces on the RPI. It refuses
+        application-triggered connections.
+  \item A connection with a null \OT{} has no inactivity watchdog, and the
+        I/O is not tied to the TCP session. The connection stays open until a
+        Forward\_Close, or until the same originator opens it again.
+  \item An explicit reply carries no more than 508 bytes of assembly data. A
+        Class~1 assembly has a limit of approximately 500 bytes.
+\end{itemize}
+
+\subsection{Scanner Limits}
+
+\begin{itemize}
+  \item The scanner routes across one hop only. You can route explicit
+        messages, but use \code{slot = -1} for Class~1. A routed Forward\_Open
+        has not been tested.
+  \item The scanner does not decode tag data. Elementary types operate.
+        \code{eip_tag_write} has no form for a structure, and
+        \code{eip_tag_read} returns a structure with its header bytes in the
+        data. Thus UDTs and STRINGs are not supported as types.
+  \item Bit access by name (\code{Tag.3}) is not supported.
+  \item A packet that is too short or too large closes the session, because
+        the stream cannot be synchronized again. After a socket error or a
+        series of timeouts, close the session and open it again.
+        \code{eip_session_is_open} does not find a lost peer.
+\end{itemize}
+
+\begin{warning}
+QuickEIP does not implement CIP Safety. Do not use a QuickEIP connection as
+a safety function. Use a certified safety system to stop machinery. The
+safe state of consumed data (all zeros) is a functional default only. It is
+not a safety integrity level.
+\end{warning}

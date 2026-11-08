@@ -1,0 +1,336 @@
+\chapter{Using the Scanner}\label{ch:scanner}
+
+The scanner lets your program send requests to a PLC or a device. All
+scanner calls block until they are complete or until their timeout. On an
+RTOS, call them from a task of their own (section~\ref{sec:threads}).
+
+\section{Sessions}\label{sec:sessions}
+
+A \term{session} is a TCP connection to port 44818 with a registered session
+handle. All explicit messages and the Forward\_Open of a Class~1 connection
+go through a session.
+
+\subsection{The Slot}
+
+The \code{slot} field of \code{EipOpenConfig} tells the scanner how to send
+each request:
+
+\begin{itemize}
+  \item \code{slot = -1} sends the request directly to the device. Use it for
+        CompactLogix, Micro800, and all devices that you reach directly.
+  \item \code{slot} 0--255 puts the request in an Unconnected Send. The
+        request goes across ControlLogix backplane port 1 to that slot.
+\end{itemize}
+
+\begin{caution}
+A zeroed \code{EipOpenConfig} has slot 0, which routes across a backplane.
+For a device that you reach directly, set \code{slot = -1}. If you do not,
+the device can refuse the requests, or a router can send them to the wrong
+module.
+\end{caution}
+
+\subsection{Open and Close a Session}
+
+\begin{procedure}{Open a session and read a tag}
+\begin{enumerate}
+  \item Declare the \code{EipSession} as \code{static}. It is approximately
+        4.7~KB.
+  \item Set an \code{EipOpenConfig} to zero.
+  \item Set \code{ip} to the address of the device, as dotted text.
+  \item Set \code{slot}. Use $-1$ for a device that you reach directly.
+  \item Optional: set \code{timeout_ms}. The value 0 selects 5000~ms.
+  \item Call \code{eip_session_open}.
+  \item If the result is not \code{EIP_OK}, stop. Use
+        \code{eip_status_text} to show the cause.
+  \item Send your requests.
+  \item Call \code{eip_session_close}.
+\end{enumerate}
+\end{procedure}
+
+\begin{lstlisting}
+#include <stdio.h>
+#include "eip.h"
+
+static EipSession s;   /* about 4.7 KB: keep it off the stack */
+
+int read_speed(void)
+{
+    EipOpenConfig open = {0};
+    uint8_t buf[4];
+    uint16_t len = sizeof buf, type = 0;
+    uint8_t status = 0;
+    int rc;
+
+    open.ip = "192.168.1.10";
+    open.slot = -1;           /* direct. A zeroed config means slot 0! */
+    open.timeout_ms = 2000;   /* 0 selects 5000 */
+    open.vendor_id = 65000;   /* used only by a Class 1 Forward_Open */
+
+    rc = eip_session_open(&s, &open);
+    if (rc != EIP_OK) {
+        printf("open failed: %s\n", eip_status_text(rc));
+        return rc;
+    }
+    rc = eip_tag_read(&s, "Program:Main.Speed", 1, buf, &len, &type, &status);
+    if (rc == EIP_OK && type == EIP_DINT) {
+        printf("Speed = %d\n", (int)(int32_t)eip_load_le32(buf));
+    } else if (rc == EIP_ERR_CIP) {
+        printf("CIP status 0x%02X / 0x%04X\n",
+               eip_last_cip_status(&s), eip_last_cip_extended(&s));
+    }
+    eip_session_close(&s);
+    return rc;
+}
+\end{lstlisting}
+
+\subsection{Rules for Sessions}
+
+\begin{itemize}
+  \item \code{eip_session_open} writes over the session. Close a session
+        before you open it again.
+  \item \code{eip_session_is_open} is safe on a zeroed session that you
+        never opened.
+  \item After \code{EIP_ERR_TIMEOUT}, the session usually stays open. The
+        next request discards a late reply.
+  \item A packet that is too short or too large closes the session, because
+        the stream cannot be synchronized again. The call that failed returns
+        its error. Later calls return \code{EIP_ERR_STATE} until you open the
+        session again.
+  \item \code{eip_session_is_open} tells you only that the session is
+        registered here. It stays 1 after the peer stops.
+\end{itemize}
+
+\begin{caution}
+Do not use \code{eip_session_is_open} to find a lost device. After
+\code{EIP_ERR_IO}, or when requests continue to time out, close the session
+and open it again.
+\end{caution}
+
+\section{Tags}\label{sec:tags}
+
+\code{eip_tag_read} and \code{eip_tag_write} access Logix tags by name.
+
+\begin{itemize}
+  \item Use a period for a member and \code{[n]} or \code{[n,m]} for an
+        element: \code{Program:Main.Speed}, \code{Data[2,3].Value}.
+  \item The scanner breaks reads and writes that are larger than one packet
+        into fragments (Read Tag Fragmented and Write Tag Fragmented).
+  \item Data is raw little-endian bytes. Use the helpers
+        \code{eip_load_le16}, \code{eip_load_le32}, \code{eip_store_le16}, and
+        \code{eip_store_le32}.
+  \item \code{cip_type} receives the CIP type code of the tag, for example
+        \code{EIP_DINT} (\hex{00C4}). Table~\ref{tab:ciptypes} lists the codes.
+\end{itemize}
+
+\begin{lstlisting}
+uint8_t buf[4];
+uint8_t status = 0;
+
+eip_store_le32(buf, 1234);
+eip_tag_write(&s, "Setpoint", EIP_DINT, 1, buf, 4, &status);
+\end{lstlisting}
+
+\begin{caution}
+A write of more than one fragment is not atomic. If an error occurs during
+the write, the PLC can keep the fragments that it already received. Thus the
+tag can contain a mix of old and new data. Do not write large arrays that a
+running PLC program uses for control while the write is in progress.
+\end{caution}
+
+\section{Explicit Messages}\label{sec:explicit}
+
+\code{eip_cip} sends one CIP service with a raw path. Use it for a service that
+has no helper. The helpers \code{eip_get_attribute} and
+\code{eip_set_attribute} send Get\_Attribute\_Single and
+Set\_Attribute\_Single.
+
+\begin{lstlisting}
+uint8_t buf[4];
+uint16_t len = sizeof buf;
+uint8_t status = 0;
+
+/* Identity object (class 0x01), instance 1, attribute 1: vendor ID */
+eip_get_attribute(&s, 0x01, 1, 1, buf, &len, &status);
+\end{lstlisting}
+
+\begin{itemize}
+  \item The encoded request has a limit of 480 bytes.
+  \item A general status other than 0 gives \code{EIP_ERR_CIP}. The
+        exception is \hex{06} (partial transfer), which gives \code{EIP_OK}
+        with the status in \code{*cip_status}.
+  \item When a call returns \code{EIP_ERR_CIP}, \code{eip_last_cip_status}
+        gives the general status and \code{eip_last_cip_extended} gives the
+        extended status.
+  \item On a routed session (slot 0 or more), the router can cause the error.
+        For example, \hex{01} / \hex{0204} means that the slot did not answer.
+\end{itemize}
+
+\section{Discovery and Symbols}\label{sec:discovery}
+
+\begin{lstlisting}
+EipDevice found[16];
+uint16_t n = 16;
+eip_scan_devices(found, &n, 0);       /* broadcast on each interface */
+
+EipIdentity id;
+eip_list_identity("192.168.1.10", &id, 0);
+
+static EipSymbol tags[256];
+uint16_t count = 256;
+eip_list_symbols(&s, tags, &count);   /* Micro800: open with slot -1 */
+\end{lstlisting}
+
+\begin{itemize}
+  \item \code{eip_scan_devices} sends a broadcast ListIdentity on each
+        interface and on the global broadcast address. With a timeout of 0, it
+        waits approximately 3~s, sends again each second, and stops 0.5~s
+        after the last reply. \code{EIP_OK} with a count of 0 means that no
+        device answered.
+  \item Broadcasts do not cross routers or VLANs. For a device on a different
+        subnet, use \code{eip_list_identity} with its address.
+  \item \code{eip_list_symbols} reads the Symbol object. If a later page
+        fails, the count still tells you how many symbols the call stored.
+  \item \code{eip_device_kind} sorts Rockwell products into Micro800,
+        CompactLogix, or other by the catalog name. This is a heuristic.
+        Your application decides what to do with the result.
+\end{itemize}
+
+\section{Class 1 I/O as an Originator}\label{sec:originator}
+
+The scanner can open a Class~1 connection to an adapter. Your program then
+produces \OT{} data and consumes \TO{} data.
+
+\begin{procedure}{Open a Class 1 connection}
+\begin{enumerate}
+  \item Open a session with \code{slot = -1} and your vendor ID in
+        \code{vendor_id}.
+  \item Set an \code{EipIoConfig} to zero.
+  \item Set \code{config_instance} to the value in the EDS file of the target.
+  \item Set \code{output_instance} and \code{output_bytes} for the data that
+        you produce.
+  \item Set \code{input_instance} and \code{input_bytes} for the data that
+        you consume.
+  \item Set \code{o2t_rpi_us} and \code{t2o_rpi_us}.
+  \item Set \code{run_idle} to 1 if the target expects the run/idle header.
+  \item Set \code{timeout_multiplier}.
+  \item Call \code{eip_io_open}.
+  \item Make sure that the result is \code{EIP_OK}.
+\end{enumerate}
+\end{procedure}
+
+\begin{lstlisting}
+static EipIo io;
+EipIoConfig ioc = {0};
+uint8_t out[32] = {0}, in[32];
+
+ioc.config_instance = 151;
+ioc.output_instance = 150;  ioc.output_bytes = 32;   /* we produce (O->T) */
+ioc.input_instance  = 100;  ioc.input_bytes  = 32;   /* we consume (T->O) */
+ioc.o2t_rpi_us = ioc.t2o_rpi_us = 10000;             /* 10 ms */
+ioc.run_idle = 1;
+ioc.timeout_multiplier = 2;                          /* timeout = RPI x 16 */
+
+if (eip_io_open(&s, &io, &ioc) == EIP_OK) {
+    for (;;) {                                       /* once per RPI */
+        uint16_t in_len = sizeof in;
+        eip_io_produce(&io, out, 32, 1 /* run */);
+        eip_io_consume(&io, in, &in_len, 100);
+    }
+    eip_io_close(&s, &io);
+}
+\end{lstlisting}
+
+These rules apply:
+
+\begin{itemize}
+  \item The originator binds UDP 2223--2231, unless you set
+        \code{local_port}. Thus it can share a device with an adapter on 2222.
+  \item The library does not set the packet interval. Call
+        \code{eip_io_produce} one time each RPI.
+  \item \code{eip_io_consume} waits for a packet. A loop like the example
+        thus runs at the \TO{} rate. A timeout of 0 means 1~s. There is no
+        non-blocking form. Use a short timeout, or use different tasks for
+        produce and consume.
+  \item \code{config_instance = 0} sends instance 0 in the path. The QuickEIP
+        adapter accepts it, but a different target can refuse it.
+  \item The connection size sent to the target follows
+        equation~\eqref{eq:o2t}.
+\end{itemize}
+
+\begin{caution}
+Use the address that the adapter reports, which is the address that a scan
+shows. The adapter tells the originator to send to that address, and it
+accepts \OT{} data only from the address of the Forward\_Open. If you use a
+different address of the same host, for example \code{127.0.0.1}, the adapter
+drops the packets and the connection times out. Explicit messages are not
+affected.
+\end{caution}
+
+\begin{note}
+\notelabel Open Class~1 on a session with \code{slot = -1}. On a routed
+session, the Forward\_Open goes through Unconnected Send. That combination has
+not been tested.
+\end{note}
+
+\subsection{Recover a Lost Connection}\label{sec:recover}
+
+\code{eip_io_produce} uses UDP, so it continues to succeed after the target
+stops. A lost connection shows only in \code{eip_io_consume}, which returns
+\code{EIP_ERR_TIMEOUT} when no \TO{} packet arrives. Figure~\ref{fig:recover}
+shows the recovery sequence.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\sffamily\small,>=Stealth,node distance=0.55cm,
+  stp/.style={draw=steel,fill=white,rounded corners=2pt,minimum width=4.6cm,minimum height=0.72cm,align=center},
+  call/.style={stp,fill=codebg,font=\ttfamily\small},
+  dec/.style={diamond,aspect=2.6,draw=amber,fill=amber!8,inner sep=1pt,align=center,font=\sffamily\scriptsize},
+  lab/.style={font=\sffamily\scriptsize,text=steel}]
+  \node[stp,fill=teal!12,draw=teal] (loop) {Produce and consume each RPI};
+  \node[dec,below=of loop] (to) {Consume returns\\\code{EIP_ERR_TIMEOUT}?};
+  \node[dec,below=of to] (n) {Timeouts in a row\\$\geq N$?};
+  \node[call,below=0.7cm of n] (c1) {eip\_io\_close};
+  \node[call,below=of c1] (c2) {eip\_session\_close};
+  \node[call,below=of c2] (c3) {eip\_session\_open};
+  \node[call,below=of c3] (c4) {eip\_io\_open};
+  \node[stp,right=1.4cm of c3,minimum width=3.0cm] (wait) {Wait, then\\try again};
+  \draw[->,steel] (loop) -- (to);
+  \draw[->,steel] (to) -- node[lab,right]{yes} (n);
+  \draw[->,steel] (to.east) -- ++(1.6,0) |- node[lab,pos=0.25,right]{no: count = 0} (loop.east);
+  \draw[->,steel] (n.west) -- ++(-1.2,0) |- node[lab,pos=0.25,left]{no} (loop.west);
+  \draw[->,steel] (n) -- node[lab,right]{yes} (c1);
+  \draw[->,steel] (c1) -- (c2);
+  \draw[->,steel] (c2) -- (c3);
+  \draw[->,steel] (c3) -- (c4);
+  \draw[->,steel] (c3.east) -- node[lab,above]{fails} (wait.west);
+  \draw[->,steel] (wait.north) |- (c2.east);
+  \draw[->,steel] (c4.west) -- ++(-2.2,0) node[lab,above,pos=0.5]{OK} |- (loop.west);
+  \draw[->,steel] (c4.east) -| node[lab,below,pos=0.25]{fails} (wait.south);
+\end{tikzpicture}
+\caption{Recovery of a lost Class~1 connection on the originator. The four
+calls are all necessary: a reopen of I/O on the old session fails.}
+\label{fig:recover}
+\end{figure}
+
+\begin{procedure}{Recover a lost Class 1 connection}
+\begin{enumerate}
+  \item Count the calls to \code{eip_io_consume} in a row that return
+        \code{EIP_ERR_TIMEOUT}.
+  \item When the count gets to your limit, call \code{eip_io_close}.
+  \item Call \code{eip_session_close}.
+  \item Call \code{eip_session_open}.
+  \item If the open fails, wait and do step 3 again.
+  \item Call \code{eip_io_open}.
+  \item Set the count to 0, and start the produce and consume loop again.
+\end{enumerate}
+\end{procedure}
+
+\begin{note}
+\notelabel When the peer is gone, \code{eip_io_close} can block for the session
+timeout and return an error. This is the expected result. The call still
+releases the UDP socket.
+\end{note}
+
+If you do not close and open the session, \code{eip_io_open} returns
+\code{EIP_ERR_IO}.

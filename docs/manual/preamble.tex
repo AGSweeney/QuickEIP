@@ -1,0 +1,185 @@
+% QuickEIP Programming and Implementation Manual: shared preamble.
+% Build: tectonic quickeip-manual.tex
+\documentclass[11pt,twoside,openright]{book}
+
+\usepackage[letterpaper,inner=1.15in,outer=1in,top=1in,bottom=1.05in,
+            headheight=14pt,headsep=0.3in]{geometry}
+
+% ---- fonts (XeTeX through Tectonic) ---------------------------------------
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setmainfont{texgyrepagella}[
+  Extension=.otf, UprightFont=*-regular, BoldFont=*-bold,
+  ItalicFont=*-italic, BoldItalicFont=*-bolditalic, Ligatures=TeX]
+\setsansfont{texgyreheros}[
+  Extension=.otf, UprightFont=*-regular, BoldFont=*-bold,
+  ItalicFont=*-italic, BoldItalicFont=*-bolditalic, Ligatures=TeX]
+\setmonofont{DejaVuSansMono}[
+  Extension=.ttf, UprightFont=*, BoldFont=*-Bold,
+  ItalicFont=*-Oblique, BoldItalicFont=*-BoldOblique, Scale=0.84]
+\setmathfont{texgyrepagella-math.otf}
+
+\usepackage{microtype}
+% Code words cannot hyphenate; let a line stretch instead of overflowing.
+\setlength{\emergencystretch}{3em}
+
+% ---- color, boxes, figures ------------------------------------------------
+\usepackage{xcolor}
+\definecolor{navy}{HTML}{1B2F4B}
+\definecolor{steel}{HTML}{3D5A80}
+\definecolor{teal}{HTML}{2A9D8F}
+\definecolor{amber}{HTML}{C77700}
+\definecolor{signal}{HTML}{B3261E}
+\definecolor{noteblue}{HTML}{1F6FB2}
+\definecolor{codebg}{HTML}{F5F7FA}
+\definecolor{rulegray}{HTML}{C9D1DB}
+\definecolor{commentgreen}{HTML}{4E7A55}
+\definecolor{stringred}{HTML}{9A3324}
+
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,shapes.misc,calc,fit,backgrounds,decorations.pathreplacing}
+\usepackage[most]{tcolorbox}
+
+% ---- tables and lists -----------------------------------------------------
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multicol}
+\usepackage[shortlabels]{enumitem}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\renewcommand{\arraystretch}{1.18}
+\setlength{\tabcolsep}{5pt}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlist[enumerate,1]{label=\arabic*.,leftmargin=*}
+
+% ---- captions: Chicago style, label then period ---------------------------
+\usepackage[font={small},labelfont={bf,sf},labelsep=period,
+            justification=raggedright,singlelinecheck=false]{caption}
+\captionsetup[table]{position=top,skip=4pt}
+\captionsetup[figure]{position=bottom,skip=6pt}
+
+% ---- headings -------------------------------------------------------------
+\usepackage{titlesec}
+\titleformat{\chapter}[display]
+  {\sffamily\bfseries\color{navy}}
+  {\normalsize\mdseries\scshape\color{steel}\chaptertitlename\ \thechapter}
+  {4pt}
+  {\Huge\raggedright}
+  [\vspace{4pt}{\color{teal}\titlerule[1.2pt]}]
+\titlespacing*{\chapter}{0pt}{-10pt}{26pt}
+\titleformat{\section}{\sffamily\Large\bfseries\color{navy}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\sffamily\large\bfseries\color{steel}}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\sffamily\normalsize\bfseries\color{steel}}{}{0em}{}
+\titlespacing*{\section}{0pt}{16pt}{6pt}
+\titlespacing*{\subsection}{0pt}{12pt}{4pt}
+\titlespacing*{\subsubsection}{0pt}{10pt}{3pt}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{1}
+
+% ---- running heads --------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{{\color{rulegray}\hrule height\headrulewidth width\headwidth}}
+\fancyhead[LE]{\sffamily\small\color{steel}\leftmark}
+\fancyhead[RO]{\sffamily\small\color{steel}\rightmark}
+\fancyfoot[LE,RO]{\sffamily\small\thepage}
+\fancyfoot[RE,LO]{\sffamily\scriptsize\color{steel}QuickEIP Programming and Implementation Manual}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter.\ #1}{}}
+\renewcommand{\sectionmark}[1]{\markright{\thesection\ \ #1}}
+\fancypagestyle{plain}{\fancyhf{}\renewcommand{\headrulewidth}{0pt}%
+  \renewcommand{\headrule}{}\fancyfoot[LE,RO]{\sffamily\small\thepage}}
+
+% ---- code listings --------------------------------------------------------
+\usepackage{listings}
+\lstdefinestyle{qe}{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{navy}\bfseries,
+  commentstyle=\color{commentgreen}\itshape,
+  stringstyle=\color{stringred},
+  backgroundcolor=\color{codebg},
+  frame=leftline, framerule=2.5pt, rulecolor=\color{teal},
+  xleftmargin=10pt, framexleftmargin=6pt, framesep=4pt,
+  aboveskip=8pt, belowskip=8pt,
+  columns=fullflexible, keepspaces=true, showstringspaces=false,
+  breaklines=true, breakatwhitespace=true,
+  upquote=true, tabsize=4,
+}
+\lstset{style=qe,language=C}
+\lstdefinelanguage{shell}{morecomment=[l]{\#},sensitive=true}
+\lstdefinelanguage{cmake}{
+  morekeywords={cmake_minimum_required,project,list,include,add_subdirectory,
+    add_executable,target_link_libraries,set,idf_component_register,
+    idf_build_set_property,APPEND,PRIVATE,CACHE,BOOL,VERSION,SRCS,INCLUDE_DIRS,REQUIRES},
+  morecomment=[l]{\#},morestring=[b]",sensitive=true}
+\lstdefinelanguage{make}{morekeywords={include},morecomment=[l]{\#},sensitive=true}
+\lstdefinelanguage{eds}{morecomment=[l]{\$},morestring=[b]",sensitive=true}
+\lstdefinelanguage{yaml}{morecomment=[l]{\#},sensitive=true}
+
+% ---- admonitions (ASD-STE100: warning, caution, note) ---------------------
+\newtcolorbox{warning}{enhanced,breakable,colback=signal!5,colframe=signal,
+  boxrule=0.8pt,arc=1.5pt,left=8pt,right=8pt,top=4pt,bottom=4pt,
+  fonttitle=\sffamily\bfseries,coltitle=white,
+  title={\raisebox{-1pt}{\large$\triangle$}\ \ WARNING}}
+\newtcolorbox{caution}{enhanced,breakable,colback=amber!6,colframe=amber,
+  boxrule=0.8pt,arc=1.5pt,left=8pt,right=8pt,top=4pt,bottom=4pt,
+  fonttitle=\sffamily\bfseries,coltitle=white,title={CAUTION}}
+\newtcolorbox{note}{enhanced,breakable,colback=noteblue!5,colframe=noteblue!80,
+  boxrule=0pt,leftrule=3pt,arc=0pt,left=8pt,right=8pt,top=4pt,bottom=4pt,
+  fontupper=\small}
+\newcommand{\notelabel}{\textsf{\textbf{\color{noteblue}NOTE:}}\ }
+
+% Procedure: a titled, numbered task (ASD-STE100 procedural writing).
+\newtcolorbox{procedure}[1]{enhanced,breakable,colback=white,colframe=steel,
+  boxrule=0.6pt,arc=1.5pt,left=6pt,right=8pt,top=4pt,bottom=4pt,
+  fonttitle=\sffamily\bfseries\small,colbacktitle=steel!12,coltitle=navy,
+  title={Procedure: #1}}
+
+% API entry: name, then the prototype in a shaded box.
+\newtcolorbox{protobox}{enhanced,colback=codebg,colframe=rulegray,boxrule=0.4pt,
+  arc=1pt,left=6pt,right=6pt,top=3pt,bottom=3pt,before skip=3pt,after skip=4pt,
+  fontupper=\ttfamily\small}
+% Label keys must not contain an active underscore: the aux file of an
+% \include'd chapter is read back after the underscore package activates it.
+\ExplSyntaxOn
+\str_new:N \l_qe_key_str
+\cs_new_protected:Npn \qe_setkey:n #1
+  { \str_set:Nn \l_qe_key_str {#1} \str_replace_all:Nnn \l_qe_key_str { _ } { - } }
+\NewDocumentCommand{\apilabel}{m}{ \qe_setkey:n {#1} \exp_args:Nx \label { api: \l_qe_key_str } }
+\NewDocumentCommand{\apipageref}{m}{ \qe_setkey:n {#1} \exp_args:Nx \pageref { api: \l_qe_key_str } }
+\ExplSyntaxOff
+\newcommand{\api}[2]{%
+  \par\addvspace{10pt}\needspace{6\baselineskip}%
+  \phantomsection\apilabel{#1}%
+  \noindent{\sffamily\bfseries\color{navy}#1}\par\nopagebreak
+  \begin{protobox}\raggedright #2\end{protobox}\nopagebreak}
+\newcommand{\apiidx}[1]{\noindent\texttt{#1}\dotfill\apipageref{#1}\par}
+\usepackage{needspace}
+
+% ---- inline helpers -------------------------------------------------------
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\file}[1]{\texttt{#1}}
+% Direction arrows that work in text and in math (subscripts of equations).
+\DeclareRobustCommand{\OT}{\ifmmode\text{O}{\to}\text{T}\else O\kern0.05em$\to$\kern0.05em T\fi}
+\DeclareRobustCommand{\TO}{\ifmmode\text{T}{\to}\text{O}\else T\kern0.05em$\to$\kern0.05em O\fi}
+\newcommand{\hex}[1]{\texttt{0x#1}}
+\newcommand{\term}[1]{\textit{#1}}
+\newcommand{\menu}[1]{\textsf{#1}}
+
+\usepackage{amsmath}
+\usepackage{siunitx}
+\sisetup{group-separator={,},group-minimum-digits=4}
+
+% ---- links last -----------------------------------------------------------
+\usepackage[hidelinks,bookmarksnumbered,pdfusetitle]{hyperref}
+\hypersetup{pdftitle={QuickEIP Programming and Implementation Manual},
+  pdfauthor={Adam G. Sweeney},pdfsubject={EtherNet/IP scanner and adapter stack},
+  pdfkeywords={EtherNet/IP, CIP, embedded, C99, QuickEIP}}
+\usepackage{bookmark}
+
+% Load last: an active underscore breaks PGF if it loads first.
+\usepackage[strings,nohyphen]{underscore}

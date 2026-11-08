@@ -1,0 +1,548 @@
+\chapter{Platform Integration}\label{ch:platforms}
+
+This chapter gives the steps to add QuickEIP to a project on each shipped
+platform. Table~\ref{tab:platforms} gives the test status of each port.
+
+% -------------------------------------------------------------------------
+\section{NetBurner NNDK}\label{sec:netburner}
+
+The port was tested with NNDK 3.5.8 on ARM platforms. The NNDK 3.x socket
+API is the same on all platforms.
+
+\begin{procedure}{Add QuickEIP to an NNDK project}
+\begin{enumerate}
+  \item Put QuickEIP in a subdirectory of the project, for example
+        \file{MyProject/QuickEIP}. A git submodule is also correct.
+  \item Write the makefile of the project (listing below).
+  \item Set the NNDK environment variables.
+  \item Run \code{make}.
+  \item Find the image at \file{obj/release/MyProject.bin}.
+\end{enumerate}
+\end{procedure}
+
+\begin{note}
+\notelabel The NNDK rules put each object file at
+\file{obj/release/}\textit{source path}. A source path that starts with
+\file{../} thus puts the object files outside \file{obj/}, next to your
+sources. Keep QuickEIP inside the project directory to prevent this.
+\end{note}
+
+This is a complete makefile, with QuickEIP in a subdirectory:
+
+\begin{lstlisting}[language=make]
+NAME    = MyProject
+
+CPP_SRC += src/main.cpp
+
+QUICKEIP = QuickEIP
+
+C_SRC   += $(QUICKEIP)/src/eip_codec.c \
+           $(QUICKEIP)/src/eip_adapter.c \
+           $(QUICKEIP)/src/eip_session.c \
+           $(QUICKEIP)/src/eip_io.c \
+           $(QUICKEIP)/src/eip_scan.c \
+           $(QUICKEIP)/src/eip_server.c \
+           $(QUICKEIP)/src/eip_adapter_default.c
+CPP_SRC += $(QUICKEIP)/ports/netburner/eip_hal_netburner.cpp
+NBINCLUDE += -I$(QUICKEIP)/include -I$(QUICKEIP)/src
+
+include $(NNDK_ROOT)/make/boilerplate.mk
+\end{lstlisting}
+
+Set the environment and build, for example:
+
+\begin{lstlisting}[language=shell]
+export NNDK_ROOT=C:/nburn PLATFORM=MODM7AE70 DEFPLATFORM=MODM7AE70
+export PATH=/c/nburn/gcc/bin:/c/nburn/pcbin:/c/nburn/gcc/msys/1.0/bin:$PATH
+make
+\end{lstlisting}
+
+The first build takes several minutes, because the NNDK compiles its system
+library into the \file{obj/} directory of the project. This is normal. For
+NBEclipse, add the same files to the project. Add the two include directories
+to the C and the C++ compiler settings.
+
+\subsection{Start QuickEIP from UserMain}
+
+Scanner calls block, so run them in a task of their own. Each task needs its
+own priority, and a lower number runs first. The adapter task uses
+\code{MAIN_PRIO - 1}. Thus \code{MAIN_PRIO + 1} is a safe priority for the
+scanner task. \code{UserMain} must then sleep, so that the scanner task can
+run.
+
+\begin{lstlisting}[language=C++]
+#include <init.h>
+#include <nbrtos.h>
+#include <string.h>
+
+#include "eip.h"
+
+const char *AppName = "MyProject";
+
+static void ScannerTask(void *)
+{
+    for (;;) {
+        /* eip_session_open, eip_tag_read, and so on (chapter 6) */
+        OSTimeDly(TICKS_PER_SECOND);
+    }
+}
+
+void UserMain(void *)
+{
+    EipAdapterConfig cfg;
+
+    init();
+    WaitForActiveNetwork(TICKS_PER_SECOND * 10);
+
+    memset(&cfg, 0, sizeof cfg);
+    /* fill in cfg as in chapter 4 */
+    eip_adapter_start(&cfg);
+    OSSimpleTaskCreatewName(ScannerTask, MAIN_PRIO + 1, "EipScanner");
+
+    for (;;) {
+        /* eip_adapter_read and eip_adapter_write */
+        OSTimeDly(1);
+    }
+}
+\end{lstlisting}
+
+\subsection{Platform Notes}
+
+\begin{description}[font=\sffamily\bfseries\color{steel}]
+  \item[Clock resolution.] \code{eip_hal_millis} follows \code{TimeTick}: 50~ms
+        at the default 20~Hz. The adapter never sets a Class~1 timeout shorter
+        than two ticks (100~ms), and \TO{} packets go out on tick boundaries.
+        For RPIs shorter than approximately 50~ms, increase
+        \code{TICKS_PER_SECOND} in the platform configuration.
+  \item[Task.] The adapter task runs at \code{MAIN_PRIO - 1} by default. Set
+        \code{EIP_ADAPTER_TASK_PRIORITY} to change it. The task uses the
+        default NNDK task stack.
+  \item[Lock.] \code{eip_hal_lock} is \code{OSLock()}, which stops task
+        switches for a short time. It is never held during a socket call.
+  \item[UDP sockets.] The port uses \code{CreateRxTxUdpSocket4} with an
+        explicit local port. When the library asks for ``any port,'' the port
+        selects one in 50000--50063.
+  \item[TCP options.] The port does not set TCP\_NODELAY or keep-alive. A slot
+        of a lost peer comes back through eviction after
+        \code{EIP_ADAPTER_EVICT_MS}.
+  \item[Web UI.] \file{examples/netburner_webui} is a test web page. It is
+        application code, not part of the stack. It has no \code{main} and no
+        makefile, so add it to an NNDK application.
+\end{description}
+
+% -------------------------------------------------------------------------
+\section{ESP-IDF (ESP32)}\label{sec:espidf}
+
+The port was tested with ESP-IDF 5.5.1 on the esp32 target. All ESP-IDF 5.x
+versions should operate.
+
+\subsection{Add the Component}
+
+The root directory of QuickEIP is an IDF component. The component takes the
+name of its directory. Use the same spelling in all locations. The simpler
+method is a top-level \file{CMakeLists.txt} that names the directory. The
+path is relative to the project. Here QuickEIP is beside it:
+
+\begin{lstlisting}[language=cmake]
+cmake_minimum_required(VERSION 3.16)
+list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/../QuickEIP")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(myapp)
+\end{lstlisting}
+
+With the component manager, put the dependency in \file{main/idf_component.yml}.
+The path is relative to \file{main/}:
+
+\begin{lstlisting}[language=yaml]
+dependencies:
+  QuickEIP:
+    path: ../../QuickEIP
+\end{lstlisting}
+
+\begin{caution}
+The dependency key must be the same as the directory name. If it is not, the
+build fails with \code{Failed to resolve component ... unknown name}. A change
+to \code{REQUIRES} does not correct this error.
+\end{caution}
+
+With the two methods, \file{main/CMakeLists.txt} names the component and the
+network components that you use:
+
+\begin{lstlisting}[language=cmake]
+idf_component_register(SRCS "main.c"
+                       INCLUDE_DIRS "."
+                       REQUIRES QuickEIP esp_eth esp_netif esp_event)
+\end{lstlisting}
+
+Build with \code{idf.py set-target esp32} and then \code{idf.py build}.
+
+\subsection{Start Ethernet}
+
+Use the driver code in \file{examples/ethernet/basic} of ESP-IDF as a model.
+
+\begin{warning}
+You must know the PHY, the pins, and the RMII clock mode of your board. A
+wrong value compiles without an error, but the link never comes up. Get these
+values from the schematic of the board. Do not guess them.
+\end{warning}
+
+This example is for the internal EMAC of the ESP32 with a LAN87xx PHY:
+
+\begin{lstlisting}
+#include "esp_eth.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+
+static esp_eth_handle_t s_eth;
+static esp_netif_t *s_netif;
+static volatile int s_link_up;
+
+static void eth_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg; (void)base; (void)data;
+    if (id == ETHERNET_EVENT_CONNECTED) s_link_up = 1;
+    else if (id == ETHERNET_EVENT_DISCONNECTED) s_link_up = 0;
+}
+
+static void eth_start(void)
+{
+    eth_mac_config_t mac_cfg = ETH_MAC_DEFAULT_CONFIG();
+    eth_esp32_emac_config_t emac_cfg = ETH_ESP32_EMAC_DEFAULT_CONFIG(); /* set smi_gpio and clock_config */
+    eth_phy_config_t phy_cfg = ETH_PHY_DEFAULT_CONFIG();                /* and your PHY address */
+    esp_eth_mac_t *mac = esp_eth_mac_new_esp32(&emac_cfg, &mac_cfg);
+    esp_eth_phy_t *phy = esp_eth_phy_new_lan87xx(&phy_cfg);
+    esp_eth_config_t eth_cfg = ETH_DEFAULT_CONFIG(mac, phy);
+    esp_netif_config_t netif_cfg = ESP_NETIF_DEFAULT_ETH();
+
+    ESP_ERROR_CHECK(esp_eth_driver_install(&eth_cfg, &s_eth));
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    s_netif = esp_netif_new(&netif_cfg);
+    ESP_ERROR_CHECK(esp_netif_attach(s_netif, esp_eth_new_netif_glue(s_eth)));
+    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, eth_event, NULL));
+    ESP_ERROR_CHECK(esp_eth_start(s_eth));
+}
+\end{lstlisting}
+
+\subsection{Report the Link}
+
+The esp\_netif layer does not report speed or duplex. Read them from the
+driver in a \code{link_info} callback. Return 1 while the link is up, and 0 to
+report it down:
+
+\begin{lstlisting}
+static int link_info(void *ctx, uint32_t *mbps, int *full, int *autoneg)
+{
+    eth_speed_t speed;
+    eth_duplex_t duplex;
+    (void)ctx;
+    if (!s_link_up) return 0;
+    if (esp_eth_ioctl(s_eth, ETH_CMD_G_SPEED, &speed) != ESP_OK) return 0;
+    if (esp_eth_ioctl(s_eth, ETH_CMD_G_DUPLEX_MODE, &duplex) != ESP_OK) return 0;
+    *mbps = (speed == ETH_SPEED_100M) ? 100 : 10;
+    *full = (duplex == ETH_DUPLEX_FULL);
+    *autoneg = 1;
+    return 1;
+}
+\end{lstlisting}
+
+\subsection{Start the Adapter}
+
+\begin{procedure}{Start the adapter on ESP-IDF}
+\begin{enumerate}
+  \item Call \code{eth_start}.
+  \item Set all fields of \code{cfg} (chapter~\ref{ch:adapter}).
+  \item Set \code{cfg.link_info} to your callback.
+  \item Optional: call \code{eip_esp_set_netif} to select the interfaces.
+  \item Call \code{eip_adapter_start}.
+\end{enumerate}
+\end{procedure}
+
+\begin{lstlisting}
+#include "eip.h"
+#include "eip_esp_idf.h"
+
+eth_start();
+cfg.link_info = link_info;       /* with the rest of cfg, from chapter 4 */
+eip_esp_set_netif(&s_netif, 1);  /* optional: default is ETH_DEF, WIFI_STA_DEF, WIFI_AP_DEF */
+eip_adapter_start(&cfg);
+\end{lstlisting}
+
+Call \code{eip_esp_set_netif} before \code{eip_adapter_start}. The function
+copies the list, and the netifs must stay valid while the adapter runs.
+
+\subsection{Options}
+
+Put the options in compile definitions for all components. In the top-level
+\file{CMakeLists.txt}, set them after the line that includes
+\file{project.cmake} and before \code{project()}:
+
+\begin{lstlisting}[language=cmake]
+idf_build_set_property(COMPILE_DEFINITIONS "EIP_ESP_TASK_PRIORITY=12" APPEND)
+idf_build_set_property(COMPILE_DEFINITIONS "EIP_ESP_TASK_WDT=1" APPEND)
+\end{lstlisting}
+
+\begin{table}[htbp]
+\centering
+\caption{ESP-IDF port options}\label{tab:espopts}
+\begin{tabularx}{\linewidth}{@{}P{0.30\linewidth}P{0.17\linewidth}L@{}}
+\toprule
+\textbf{Define} & \textbf{Default} & \textbf{Effect} \\
+\midrule
+\code{EIP_ESP_TASK_STACK} & 6144 & Adapter task stack in bytes (or \code{EIP_ADAPTER_TASK_STACK}). \\
+\code{EIP_ESP_TASK_PRIORITY} & 12 & Adapter task priority (or \code{EIP_ADAPTER_TASK_PRIORITY}). \\
+\code{EIP_ESP_TASK_CORE} & \code{tskNO_AFFINITY} & Pins the adapter task to a core. \\
+\code{EIP_ESP_TASK_WDT} & 0 & 1 adds the adapter task to the task watchdog. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Platform Notes}
+
+\begin{itemize}
+  \item Use wired Ethernet for Class~1 in production. Wi-Fi latency peaks are
+        frequently longer than a timeout of 8 $\times$ RPI.
+  \item The adapter task waits in \code{select()}, so it starts as soon as a
+        packet arrives. While idle, it still does a pass at least each
+        \code{EIP_ADAPTER_IDLE_WAIT_MS} (5~ms).
+  \item Arduino-ESP32 runs on ESP-IDF and can use the same files. Make a
+        library directory whose \file{src/} contains \file{include/*},
+        \file{src/*}, \file{ports/bsd_sockets/*}, and \file{ports/esp-idf/*}.
+        Do not include the other ports, because Arduino compiles all files
+        that it finds. This setup has not been tested.
+  \item The example \file{examples/esp_idf_adapter} uses
+        \code{protocol_examples_common}. For that example only, run
+        \code{idf.py menuconfig} and set the network under
+        \menu{Example Connection Configuration}.
+\end{itemize}
+
+% -------------------------------------------------------------------------
+\section{Teknic ClearCore}\label{sec:clearcore}
+
+\file{examples/clearcore_adapter} compiles and links with the arm-gcc 6.3 of
+Microchip Studio, against the Enhanced ClearCore Library, a fork of ClearCore
+library 1.7. The adapter has run on a ClearCore with a Micro850 PLC. The
+example itself has not been run.
+
+ClearCore runs on bare metal (no RTOS), on the raw API of lwIP with
+\code{NO_SYS=1}. QuickEIP uses lwIP directly through \file{ports/lwip_raw}. It
+does not use the \code{EthernetTcp*} and \code{EthernetUdp} classes. Those
+classes have a 600-byte TCP buffer and no broadcast send, and EtherNet/IP
+needs more.
+
+\begin{procedure}{Set up a ClearCore project}
+\begin{enumerate}
+  \item Copy \file{ProjectTemplate}, \file{libClearCore}, and \file{LwIP}
+        from the ClearCore library directory to a location where you can
+        write.
+  \item Put your QuickEIP directory beside them. The four directories must be
+        at the same level, because the paths below are relative.
+  \item Open \file{ProjectTemplate.atsln}.
+  \item Make sure that the three projects load.
+  \item Add the files with \menu{Add $\to$ Existing Item $\to$ Add As Link}:
+        \file{src/*.c} (all files), \file{ports/lwip_raw/eip_hal_lwip_raw.c},
+        and \file{ports/clearcore/eip_hal_clearcore.cpp}.
+  \item Open \menu{Project Properties $\to$ Toolchain}. Do steps 7--10 in the
+        Debug and the Release configurations.
+  \item In \menu{ARM/GNU C Compiler $\to$ Directories} and \menu{ARM/GNU C++
+        Compiler $\to$ Directories}, add \file{../../QuickEIP/include} and
+        \file{../../QuickEIP/src}.
+  \item In \menu{ARM/GNU C Compiler $\to$ Directories} only, add
+        \file{../../LwIP/LwIP/src/include} and
+        \file{../../LwIP/LwIP/port/include}.
+  \item In \menu{ARM/GNU C Compiler $\to$ Symbols} and \menu{ARM/GNU C++
+        Compiler $\to$ Symbols}, add \code{EIP_ADAPTER_MAX_CLIENTS=2}.
+  \item Keep the symbols \code{DEBUG} and \code{NDEBUG} and the flag
+        \code{-std=gnu11} that are in the template.
+  \item Replace \file{main.cpp} of the template with your main loop.
+\end{enumerate}
+\end{procedure}
+
+\begin{note}
+\notelabel The template sets the lwIP include paths for C++ only. The lwIP
+port is a C file. Without step 8, the build stops at \file{lwip/ip_addr.h}.
+\end{note}
+
+\begin{caution}
+Add \code{EIP_ADAPTER_MAX_CLIENTS=2} to the C and the C++ symbols. It changes
+the size of structures, so the two compilers must agree. The default of 4 is
+too many for this lwIP build.
+\end{caution}
+
+Paths are relative to the \file{Debug} or \file{Release} output directory.
+To check a compile without Studio, run \code{arm-none-eabi-gcc} or
+\code{arm-none-eabi-g++} with \code{-c} from \file{ProjectTemplate/Debug} and
+these flags. The toolchain is in
+\file{Atmel/Studio/7.0/toolchain/arm/arm-gnu-toolchain/bin}, and
+\textit{Packs} is \file{Atmel/Studio/7.0/Packs}:
+
+\begin{lstlisting}[language=shell]
+-mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16
+-D__SAME53N19A__ -DEIP_ADAPTER_MAX_CLIENTS=2
+-I../../QuickEIP/include -I../../QuickEIP/src -I../../QuickEIP/ports/clearcore
+-I../../libClearCore/inc -I../../LwIP/LwIP/src/include -I../../LwIP/LwIP/port/include
+-I<Packs>/atmel/SAME53_DFP/1.1.118/include
+-I<Packs>/arm/CMSIS/4.5.0/CMSIS/Include
+-I<Packs>/arm/CMSIS/5.4.0/CMSIS/Core/Include
+\end{lstlisting}
+
+\subsection{The Main Loop}
+
+The full example is in \file{examples/clearcore_adapter/main.cpp}:
+
+\begin{lstlisting}[language=C++]
+#include "ClearCore.h"
+#include "eip.h"
+
+while (!EthernetMgr.PhyLinkActive()) {                 // wait for the cable
+    Delay_ms(100);
+}
+EthernetMgr.Setup();
+if (!EthernetMgr.DhcpBegin()) {
+    EthernetMgr.LocalIp(IpAddress(192, 168, 1, 50));   // fallback static address
+}
+if (eip_adapter_start(&cfg) != EIP_OK) {               // poll mode: starts no task
+    while (true) { EthernetMgr.Refresh(); }            // stop: outputs stay off
+}
+
+while (true) {
+    eip_adapter_poll();             // every pass
+    EthernetMgr.Refresh();
+    // motion, I/O, eip_adapter_read / eip_adapter_write ...
+}
+\end{lstlisting}
+
+\subsection{Platform Notes}
+
+\begin{description}[font=\sffamily\bfseries\color{steel}]
+  \item[Call \code{eip_adapter_poll} frequently.] \TO{} packets go out from
+        inside the poll call. Thus the loop time becomes RPI jitter. Keep the
+        loop time much shorter than your RPI.
+  \item[The lwIP build is small.] It has a 4~KB heap (\code{MEM_SIZE}), five
+        TCP PCBs, and eight listening PCBs. The adapter uses one listening PCB
+        plus one PCB for each explicit session. A scanner session uses one
+        more. This is why you set \code{EIP_ADAPTER_MAX_CLIENTS} to 2 or 3. For
+        more, compile the LwIP project again with a larger \code{MEM_SIZE} and
+        \code{MEMP_NUM_TCP_PCB}. Its \file{lwipopts.h} uses \code{\#ifndef},
+        so \code{-D} operates.
+  \item[Blocking scanner calls.] They call \code{EthernetMgr.Refresh()} while
+        they wait, and motion continues from interrupts. But your main loop
+        does not run until the call returns. Keep \code{timeout_ms} short.
+  \item[Interrupts.] Do not call QuickEIP from an interrupt handler. The lwIP
+        callbacks run inside \code{EthernetMgr.Refresh()} in the main context.
+        This is why the port needs no lock.
+  \item[Socket table.] \code{EIP_LWIP_MAX_SOCKETS} (12),
+        \code{EIP_LWIP_UDP_QUEUE} (8), and \code{EIP_LWIP_ACCEPT_QUEUE} (4) set
+        the size of the raw-API socket table.
+  \item[Link report.] The port reports 100~Mbit/s full duplex while the PHY
+        link is up.
+  \item[Multicast \TO.] The port sets TTL 1 only in lwIP builds with
+        \code{LWIP_MULTICAST_TX_OPTIONS}. The standard build does not have
+        this option. Thus use a point-to-point connection.
+  \item[Host name.] lwIP on ClearCore has no host name. Call
+        \code{eip_clearcore_set_host_name} at start-up, and again from
+        \code{apply_interface} when a scanner sets attribute 6.
+\end{description}
+
+\begin{warning}
+On ClearCore, the main loop also controls motion. A blocking scanner call
+stops the main loop until it returns. Do not make scanner calls while motion
+needs service from the main loop. Keep \code{timeout_ms} short.
+\end{warning}
+
+The same three groups of files should also operate as an Arduino library with
+the ClearCore wrapper. This has not been tested.
+
+% -------------------------------------------------------------------------
+\section{Linux, macOS, and WSL}\label{sec:posix}
+
+Section~\ref{sec:hostbuild} gives the build procedure. The build makes
+\file{libquickeip.a} (the core and the POSIX port), the tests, and
+\code{eiptool}. Appendix~\ref{app:tools} describes \code{eiptool}.
+
+\begin{itemize}
+  \item Set \code{EIP_NETIF=eth1} to select the interface that the adapter
+        reports and that the scan uses first. This applies to all programs that
+        use the POSIX port. The port ignores an unknown name and uses the
+        default interface.
+  \item Ports 44818 and 2222 are above 1024, so you do not need root access.
+        Another EtherNet/IP program on the same host blocks them.
+  \item Under WSL2, the host is behind NAT. A scan to the LAN operates, but
+        PLCs on your LAN cannot get to a WSL adapter. Use mirrored networking.
+\end{itemize}
+
+% -------------------------------------------------------------------------
+\section{Windows}\label{sec:windows}
+
+The port was tested with Visual Studio 2022 on Windows 11, as x64 and Win32.
+The port is \file{ports/windows/eip_hal_windows.c}. It needs Windows 7 or
+later. Section~\ref{sec:hostbuild} gives the build procedure.
+
+\begin{procedure}{Add QuickEIP to a Windows project}
+\begin{enumerate}
+  \item Compile \file{src/*.c} and \file{ports/windows/eip_hal_windows.c}.
+  \item Add \file{include/} and \file{src/} to the include path.
+  \item Link \code{ws2_32}, \code{iphlpapi}, and \code{winmm}.
+\end{enumerate}
+\end{procedure}
+
+\begin{table}[htbp]
+\centering
+\caption{Windows port options}\label{tab:winopts}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.32\linewidth}P{0.10\linewidth}L@{}}
+\toprule
+\textbf{Define} & \textbf{Default} & \textbf{Effect} \\
+\midrule
+\code{EIP_WIN_POLL_MODE} & Off & Starts no adapter thread. Your loop calls \code{eip_adapter_poll}. \\
+\code{EIP_ADAPTER_TASK_PRIORITY} & 0 & A \code{THREAD_PRIORITY_*} value for the adapter thread. 0 selects \code{THREAD_PRIORITY_HIGHEST}. \\
+\code{EIP_ADAPTER_TASK_STACK} & 0 & Adapter thread stack in bytes. 0 is the system default. \\
+\code{EIP_WIN_MAX_SOCKETS} & 64 & Sockets open at the same time. \\
+\code{EIP_WIN_MAX_INTERFACES} & 16 & Interfaces reported. \\
+\code{EIP_WIN_NETIF_REFRESH_MS} & 2000 & Interval at which the port reads the interface list again, outside the adapter thread. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Platform Notes}
+
+\begin{description}[font=\sffamily\bfseries\color{steel}]
+  \item[Select the interface on a PC with more than one.] The adapter reports
+        interface 0 as its address, in ListIdentity and in the \OT{} socket
+        address of a Forward\_Open. Interface 0 is the first one that is up
+        and has a default gateway. Frequently, this is not the machine
+        network. Set \code{EIP_NETIF} to the friendly name or the IPv4 address
+        of the adapter interface, for example \code{EIP_NETIF="Ethernet 2"} or
+        \code{EIP_NETIF=10.168.41.1}. The port keeps a named interface also
+        while its cable is disconnected, and reports the link as down. Scanner
+        calls do not need this setting.
+  \item[Firewall.] An adapter needs inbound TCP 44818, UDP 44818, and UDP
+        2222 for your program. A scanner that runs Class~1 needs inbound UDP
+        on its local port. Use \code{Get-NetConnectionProfile} to find the
+        profile of the network.
+  \item[A new executable can lose its first replies.] Third-party security
+        software can stop inbound UDP for the first seconds that a new
+        program runs, also with Windows Firewall off. On a test PC with AVG,
+        each new binary failed its first \code{eiptool identity}, and then
+        answered in approximately 45~ms. If a new build times out, or a scan
+        finds too few devices, run it again before you look for a network
+        fault.
+  \item[Busy ports.] Other EtherNet/IP software on the PC, such as RSLinx,
+        can hold 44818 or 2222. Each bind is exclusive. The adapter then
+        cannot open the ports, and \code{listening} stays 0.
+  \item[Timing.] The port sets a 1~ms system timer period for the process
+        from its first call. This uses more power on a laptop. On the test PC,
+        a 10~ms RPI had a mean of 10.00~ms and a maximum of 11.83~ms over
+        \num{1500} packets, with the two ends on the same host.
+  \item[Link report.] Windows gives the speed. It does not give duplex or
+        autonegotiation, so the port reports full duplex and autonegotiated
+        while the link is up.
+  \item[Not tested.] Multicast \TO, and a real PLC connected to a Windows
+        adapter.
+\end{description}
+
+\begin{warning}
+Windows is not a real-time operating system. A stall of approximately 100~ms
+was measured on a bench PC. Set \code{timeout_floor_ms} to 500 or more. Do
+not use a Windows adapter for a safety function.
+\end{warning}

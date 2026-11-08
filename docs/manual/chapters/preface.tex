@@ -1,0 +1,136 @@
+\chapter{Preface}
+\markboth{Preface}{Preface}
+
+\section*{Purpose of This Manual}
+
+This manual tells you how to add QuickEIP to a firmware or desktop project,
+how to use its programming interface, and how to connect it to a PLC. It
+also tells you how to port QuickEIP to a new platform.
+
+QuickEIP is an EtherNet/IP stack in portable C99. One code base operates as
+a \term{scanner}, which sends requests to PLCs and other devices, and as an
+\term{adapter}, which a PLC sees as an I/O device.
+
+\section*{Audience}
+
+This manual is for firmware engineers and application programmers. You must
+know the C language, the build system of your platform, and the basics of
+TCP/IP networks. Knowledge of the Common Industrial Protocol (CIP) helps,
+but it is not necessary. The glossary defines the CIP terms that this
+manual uses.
+
+\section*{How to Use This Manual}
+
+Table~\ref{tab:roadmap} shows where to start for each task.
+
+\begin{table}[htbp]
+\centering
+\caption{Where to start}\label{tab:roadmap}
+\begin{tabularx}{\linewidth}{@{}P{0.42\linewidth}L@{}}
+\toprule
+\textbf{Task} & \textbf{Read} \\
+\midrule
+Learn what QuickEIP does and does not do & Chapter~\ref{ch:intro} \\
+Understand the layers and the threading model & Chapter~\ref{ch:arch} \\
+Build QuickEIP and set its sizes & Chapter~\ref{ch:build} \\
+Make your device an adapter & Chapters~\ref{ch:adapter} and \ref{ch:plc} \\
+Read and write PLC tags, or open Class~1 I/O & Chapter~\ref{ch:scanner} \\
+Set up NetBurner, ESP-IDF, ClearCore, Linux, or Windows & Chapter~\ref{ch:platforms} \\
+Port QuickEIP to a new platform & Chapter~\ref{ch:porting} \\
+Find the cause of a fault & Chapter~\ref{ch:trouble} \\
+Look up a function, a structure, or a status code & Appendixes~\ref{app:api}--\ref{app:codes} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section*{Conventions}
+
+\subsection*{Language}
+
+The text of this manual follows ASD-STE100, \textit{Simplified Technical
+English}.\footnote{ASD, \textit{ASD-STE100: Simplified Technical English},
+issue~8 (Brussels: ASD, 2021).} STE makes the text easy to read and easy to
+translate. These are the rules that you will see most:
+
+\begin{itemize}
+  \item A procedure step contains one instruction. Each step starts with a
+        verb in the imperative, for example ``Set'' or ``Do not.''
+  \item A sentence in a procedure has no more than 20 words. A sentence in
+        a description has no more than 25 words.
+  \item The text uses the active voice and the simple tenses.
+  \item A word has one meaning. For example, ``open'' always means ``start
+        a session or a connection,'' and ``close'' always means ``stop it.''
+  \item A warning or a caution comes before the step that it applies to.
+\end{itemize}
+
+Technical names, such as function names, file names, and CIP service names,
+are not changed.
+
+\subsection*{Style}
+
+The apparatus of this manual follows \textit{The Chicago Manual of
+Style}.\footnote{\textit{The Chicago Manual of Style}, 18th ed. (Chicago:
+University of Chicago Press, 2024).} Chapter and section titles use headline
+style. Lists of three or more items use the serial comma. Ranges use an en
+dash, for example UDP 2223--2231. The manual uses the alternative rule for
+numbers in Chicago 9.3: words for zero through nine in running text, and
+numerals for 10 and above. Numerals are used for all quantities with a unit,
+for data values, for instance numbers, and for code. Notes are footnotes in
+the Chicago notes-bibliography style, and the bibliography is at the end of
+the manual.
+
+\subsection*{Safety Notices}
+
+\begin{warning}
+A warning tells you about a condition that can cause injury or death. It
+also tells you about a condition that can make machinery move when you do
+not expect it.
+\end{warning}
+
+\begin{caution}
+A caution tells you about a condition that can cause damage to equipment,
+loss of data, or corruption of memory.
+\end{caution}
+
+\begin{note}
+\notelabel A note gives information that helps you do a task. It does not
+tell you about a hazard.
+\end{note}
+
+\subsection*{Typography}
+
+\begin{table}[htbp]
+\centering
+\caption{Typographic conventions}\label{tab:typo}
+\begin{tabularx}{\linewidth}{@{}P{0.32\linewidth}L@{}}
+\toprule
+\textbf{Example} & \textbf{Meaning} \\
+\midrule
+\code{eip_adapter_start} & A function, a type, a macro, or a value in code. \\
+\file{include/eip.h} & A file or a directory, relative to the repository root. \\
+\menu{Project Properties} & A menu, a dialog, or a field in a tool. \\
+\term{originator} & A term that the glossary defines, at its first use. \\
+\hex{01} / \hex{0127} & A CIP general status and its extended status. \\
+\OT, \TO & The two directions of a Class 1 connection: originator to target, and target to originator. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+All timeouts in the programming interface are in milliseconds, and RPIs are
+in microseconds. A function that returns \code{int} returns \code{EIP_OK}
+(0) or a negative \code{EIP_ERR_*} code, unless the text gives a different
+rule.
+
+\section*{Related Documents}
+
+The comments in the headers in \file{include/} are the primary reference
+for the programming interface. Each port with application calls has its own
+header: \file{ports/esp-idf/eip_esp_idf.h} and
+\file{ports/clearcore/eip_clearcore.h}. The repository also contains
+\file{docs/INTEGRATION.md}, \file{docs/PORTING.md}, and
+\file{docs/MIGRATION.md}. This manual contains the information in those
+files. If this manual and a header comment are different, the header comment
+agrees with the code. Use it, and report the difference.
+
+The CIP and EtherNet/IP specifications are published by ODVA. The
+bibliography lists them.

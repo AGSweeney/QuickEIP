@@ -1,0 +1,146 @@
+\chapter{Data Structures}\label{app:types}
+
+This appendix lists the fields of the public structures in \file{eip.h}. Treat
+the fields of \code{EipSession} and \code{EipIo} as private. Use the
+functions to get their values.
+
+\newenvironment{fields}[2]{%
+  \begin{longtable}{@{}P{0.30\linewidth}P{0.15\linewidth}P{0.49\linewidth}@{}}
+  \caption{#1}\label{#2}\\
+  \toprule \textbf{Field} & \textbf{Type} & \textbf{Meaning} \\ \midrule
+  \endfirsthead
+  \toprule \textbf{Field} & \textbf{Type} & \textbf{Meaning} \\ \midrule
+  \endhead
+  \bottomrule
+  \endfoot}
+ {\end{longtable}}
+
+\section{Scanner Structures}
+
+\begin{fields}{\code{EipOpenConfig}: session parameters}{tab:openconfig}
+\code{ip} & \code{const char *} & Dotted IPv4 text, for example \code{"192.168.1.10"}. \\
+\code{tcp_port} & \code{uint16_t} & 0 selects 44818. \\
+\code{slot} & \code{int16_t} & $-1$ direct. 0--255: the backplane slot. A zeroed structure has slot 0. \\
+\code{vendor_id} & \code{uint16_t} & Your ODVA vendor ID. Used by a Class~1 Forward\_Open. \\
+\code{serial_number} & \code{uint32_t} & 0 is changed to 1. \\
+\code{timeout_ms} & \code{uint32_t} & 0 selects 5000. \\
+\end{fields}
+
+\begin{fields}{\code{EipIoConfig}: Class 1 originator parameters}{tab:ioconfig}
+\code{config_instance} & \code{uint16_t} & Config assembly instance, from the EDS file. 0 is sent as instance 0. \\
+\code{output_instance} & \code{uint16_t} & \OT{} connection point. The target consumes it. \\
+\code{input_instance} & \code{uint16_t} & \TO{} connection point. The target produces it. \\
+\code{output_bytes} & \code{uint16_t} & Assembly bytes that you produce. 0 is a heartbeat. \\
+\code{input_bytes} & \code{uint16_t} & Assembly bytes that you consume. \\
+\code{o2t_rpi_us} & \code{uint32_t} & \OT{} RPI in microseconds. 0 selects \num{20000} (20~ms). \\
+\code{t2o_rpi_us} & \code{uint32_t} & \TO{} RPI in microseconds. \\
+\code{local_port} & \code{uint16_t} & 0 uses UDP 2223--2231. Port 2222 is for the adapter. \\
+\code{run_idle} & \code{uint8_t} & 1 adds a 4-byte run/idle header to \OT. \\
+\code{timeout_multiplier} & \code{uint8_t} & CIP multiplier 0--7: $\times$4, $\times$8, $\times$16, and so on. \\
+\end{fields}
+
+\begin{fields}{\code{EipIdentity}: a ListIdentity reply}{tab:identity}
+\code{vendor_id} & \code{uint16_t} & Vendor ID. \\
+\code{device_type} & \code{uint16_t} & Device type. \\
+\code{product_code} & \code{uint16_t} & Product code. \\
+\code{revision_major}, \code{revision_minor} & \code{uint8_t} & Revision. \\
+\code{status} & \code{uint16_t} & Identity object status word. \\
+\code{serial_number} & \code{uint32_t} & Serial number. \\
+\code{name} & \code{char[64]} & Product name. \\
+\code{state} & \code{uint8_t} & Identity object state. \\
+\end{fields}
+
+\begin{fields}{\code{EipDevice}: a device found by a scan}{tab:device}
+\code{ip} & \code{uint8_t[4]} & Address of the device. \\
+\code{vendor_id}, \code{device_type}, \code{product_code} & \code{uint16_t} & Identity values. \\
+\code{revision_major}, \code{revision_minor} & \code{uint8_t} & Revision. \\
+\code{serial_number} & \code{uint32_t} & Serial number. \\
+\code{name} & \code{char[64]} & Product name. \\
+\code{micro800} & \code{uint8_t} & 1 if the name is a Rockwell Micro800 catalog. \\
+\end{fields}
+
+\begin{fields}{\code{EipSymbol}: one entry of the Symbol object}{tab:symbol}
+\code{name} & \code{char[96]} & Tag name. \\
+\code{symbol_type} & \code{uint16_t} & Symbol type word. \\
+\code{element_size} & \code{uint16_t} & Bytes in one element. \\
+\code{dim0}, \code{dim1}, \code{dim2} & \code{uint32_t} & Array dimensions. \\
+\code{element_count} & \code{uint32_t} & Product of the dimensions. A dimension of 0 counts as 1. \\
+\code{is_array} & \code{uint8_t} & 1 for an array. \\
+\end{fields}
+
+\section{Adapter Structures}
+
+\begin{fields}{\code{EipAssemblyConfig}: one assembly}{tab:asmconfig}
+\code{instance} & \code{uint16_t} & Instance number. \\
+\code{direction} & \code{uint8_t} & \code{EIP_ASM_CONSUMED}, \code{EIP_ASM_PRODUCED}, or \code{EIP_ASM_CONFIG}. \\
+\code{size} & \code{uint16_t} & Bytes. 0 is permitted for a config point. \\
+\code{name} & \code{const char *} & Up to 15 characters. Can be 0. \\
+\code{initial} & \code{const uint8_t *} & Initial data, or 0 for zeros. \\
+\code{implicit_only} & \code{uint8_t} & 1: Class~1 only. Explicit Get and Set are refused. \\
+\end{fields}
+
+\begin{fields}{\code{EipAdapterConfig}: adapter configuration}{tab:adapterconfig}
+\code{vendor_id} & \code{uint16_t} & 0 keeps the test identity (vendor 65000, ``EIP Test Adapter''). \\
+\code{device_type} & \code{uint16_t} & 12 communications adapter, 43 generic device. \\
+\code{product_code} & \code{uint16_t} & Product code. \\
+\code{revision_major}, \code{revision_minor} & \code{uint8_t} & Revision. Use a minor revision of 1 or more for an EDS file. \\
+\code{product_name} & \code{const char *} & Up to 31 characters. \\
+\code{serial_number} & \code{uint32_t} & 0 derives it from the interface MAC. \\
+\code{assemblies} & \code{const EipAssemblyConfig *} & Assembly array. \\
+\code{assembly_count} & \code{uint8_t} & 0 keeps the test set (table~\ref{tab:testset}). \\
+\code{timeout_floor_ms} & \code{uint32_t} & Minimum inactivity timeout. 0 uses RPI $\times$ multiplier, but never less than two clock ticks. \\
+\code{netif_index} & \code{uint8_t} & The port interface that the adapter reports. 0 is the first. \\
+\code{link_info} & function pointer & Optional. Link state, speed, and duplex. \\
+\code{apply_interface} & function pointer & Optional. Applies new TCP/IP settings. 0: read-only. \\
+\code{reset} & function pointer & Optional. Identity Reset. 0 refuses the service. \\
+\code{callback_ctx} & \code{void *} & First argument of each callback. \\
+\code{domain} & \code{const char *} & Initial domain name for TCP/IP attribute 5. Can be 0. \\
+\code{allow_change} & function pointer & Optional. Permits or refuses an interface change (\code{EIP_CHANGE_INTERFACE}) or a reset (\code{EIP_CHANGE_RESET}). \\
+\end{fields}
+
+\begin{fields}{\code{EipAdapterView}: adapter snapshot}{tab:adapterview}
+\code{running} & \code{uint8_t} & The adapter has started. \\
+\code{listening} & \code{uint8_t} & Its sockets are open. \\
+\code{vendor_id} \dots{} \code{revision_minor} & various & Identity values. \\
+\code{serial_number} & \code{uint32_t} & Serial number. \\
+\code{name} & \code{char[32]} & Product name. \\
+\code{ip} & \code{uint8_t[4]} & Reported address. \\
+\code{io_open} & \code{uint8_t} & A Class~1 connection is open. \\
+\code{run} & \code{uint8_t} & The run/idle header says run, or the connection is modeless. \\
+\code{multicast} & \code{uint8_t} & \TO{} goes to a multicast group. \\
+\code{o2t_instance}, \code{t2o_instance} & \code{uint16_t} & Assemblies of the open connection. \\
+\code{rpi_us} & \code{uint32_t} & \TO{} interval of the open connection. \\
+\code{timeout_ms} & \code{uint32_t} & Inactivity timeout of the open connection. \\
+\code{rx_packets}, \code{tx_packets} & \code{uint32_t} & Class~1 packets in and out. \\
+\code{opens} & \code{uint32_t} & Successful Forward\_Opens. \\
+\code{timeouts} & \code{uint32_t} & Connections closed by the watchdog. \\
+\code{rx_dropped_seq} & \code{uint32_t} & Duplicate or old sequence number. \\
+\code{rx_dropped_source} & \code{uint32_t} & \OT{} from an unexpected address. \\
+\code{rx_dropped_bad} & \code{uint32_t} & Wrong connection ID, too short, or malformed. \\
+\code{rx_idle} & \code{uint32_t} & Accepted packets in idle (data set to zero). \\
+\code{udp_replies_dropped} & \code{uint32_t} & UDP 44818 requests not answered (rate limit). \\
+\code{originator_ip} & \code{uint8_t[4]} & \TO{} destination: the originator or the multicast group. \\
+\code{peer_ip} & \code{uint8_t[4]} & The originator itself. \\
+\code{tcp_clients} & \code{uint8_t} & Open explicit-message sessions. \\
+\code{assembly_count} & \code{uint16_t} & Number of assemblies. \\
+\code{assemblies} & array of \code{EipAssembly\-View} & Instance, direction, size, and name of each. \\
+\end{fields}
+
+\begin{fields}{\code{EipInterfaceConfig}: settable TCP/IP values}{tab:ifconfig}
+\code{control} & \code{uint8_t} & Attribute 3: 0 static, 2 DHCP. \\
+\code{ip}, \code{netmask}, \code{gateway} & \code{uint8_t[4]} & Attribute 5. \\
+\code{dns1}, \code{dns2} & \code{uint8_t[4]} & Attribute 5. \\
+\code{domain} & \code{char[49]} & Attribute 5. \\
+\code{host_name} & \code{char[65]} & Attribute 6. \\
+\end{fields}
+
+\begin{fields}{\code{EipNetifInfo}: interface data from a port}{tab:netifinfo}
+\code{ip}, \code{netmask}, \code{gateway} & \code{uint8_t[4]} & Address values. \\
+\code{mac} & \code{uint8_t[6]} & MAC address. Sets the default serial number. \\
+\code{dns1}, \code{dns2} & \code{uint8_t[4]} & DNS servers. \\
+\code{dhcp} & \code{uint8_t} & 1 if the address came from DHCP. \\
+\code{link_known} & \code{uint8_t} & 1 if the link fields are valid. \\
+\code{link_up}, \code{full_duplex}, \code{autonegotiated} & \code{uint8_t} & Link state. \\
+\code{speed_mbps} & \code{uint32_t} & Link speed. \\
+\code{host_name} & \code{char[65]} & Host name. \\
+\end{fields}

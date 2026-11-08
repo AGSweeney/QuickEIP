@@ -1,0 +1,169 @@
+% QuickEIP Programming and Implementation Manual
+% Copyright (c) 2026 Adam G. Sweeney. Text written to ASD-STE100 and edited
+% to The Chicago Manual of Style, 18th edition.
+%
+% Build (Tectonic, XeTeX engine):  tectonic quickeip-manual.tex
+\input{preamble}
+
+\newcommand{\docnumber}{QE-PIM-200}
+\newcommand{\docrevision}{Revision A}
+\newcommand{\swversion}{2.0.0}
+\newcommand{\docdate}{November 2026}
+
+\begin{document}
+
+% =========================================================================
+% Cover / title page
+% =========================================================================
+\frontmatter
+\pagestyle{empty}
+\begin{titlepage}
+\begin{tikzpicture}[remember picture,overlay]
+  % background bands
+  \fill[navy] (current page.north west) rectangle ([yshift=-15.2cm]current page.north east);
+  \fill[teal] ([yshift=-15.2cm]current page.north west) rectangle ([yshift=-15.55cm]current page.north east);
+  \fill[steel!10] ([yshift=-15.55cm]current page.north west) rectangle (current page.south east);
+
+  % network motif: a scanner node linked to adapter nodes
+  \begin{scope}[shift={([xshift=-6.4cm,yshift=-7.6cm]current page.north east)}]
+    \foreach \a/\r in {20/3.4,60/2.6,105/3.1,150/2.4,200/3.3,245/2.7,290/3.2,335/2.5}{
+      \draw[white!45!navy,line width=0.8pt] (0,0) -- (\a:\r);
+      \fill[teal] (\a:\r) circle (4.2pt);
+      \fill[navy] (\a:\r) circle (1.8pt);
+    }
+    \foreach \a/\b in {20/60,105/150,200/245,290/335}{
+      \draw[white!30!navy,line width=0.5pt,dashed] (\a:3.0) -- (\b:2.5);
+    }
+    \draw[teal,line width=1.2pt] (0,0) circle (1.25cm);
+    \draw[white!35!navy,line width=0.6pt] (0,0) circle (4.1cm);
+    \fill[white] (0,0) circle (0.78cm);
+    \node[navy,font=\sffamily\bfseries\small,align=center] at (0,0) {CIP};
+  \end{scope}
+
+  % title block
+  \node[anchor=north west,text=teal!70!white,font=\sffamily\bfseries\large]
+    at ([xshift=2.2cm,yshift=-3.0cm]current page.north west)
+    {ETHERNET/IP SCANNER AND ADAPTER STACK};
+  \node[anchor=north west,text=white,font=\sffamily\bfseries\fontsize{58}{60}\selectfont]
+    at ([xshift=2.1cm,yshift=-3.9cm]current page.north west) {QuickEIP};
+  \node[anchor=north west,text=white,font=\sffamily\fontsize{22}{27}\selectfont,align=left]
+    at ([xshift=2.2cm,yshift=-6.6cm]current page.north west)
+    {Programming and\\Implementation Manual};
+  \node[anchor=north west,text=white!80!steel,font=\sffamily\normalsize,align=left,text width=9cm]
+    at ([xshift=2.2cm,yshift=-9.4cm]current page.north west)
+    {Portable C99 for embedded targets: NetBurner, ESP32, Teknic ClearCore, Linux, and Windows};
+  \node[anchor=south west,text=white,font=\sffamily\small]
+    at ([xshift=2.2cm,yshift=-14.6cm]current page.north west)
+    {Software version \swversion\quad\textbar\quad \docnumber, \docrevision};
+
+  % author block
+  \node[anchor=north west,font=\sffamily\small\color{steel},align=left]
+    at ([xshift=2.2cm,yshift=-17.2cm]current page.north west) {AUTHOR AND DEVELOPER};
+  \node[anchor=north west,font=\sffamily\bfseries\fontsize{24}{28}\selectfont\color{navy},align=left]
+    at ([xshift=2.2cm,yshift=-17.9cm]current page.north west) {Adam G. Sweeney};
+  \node[anchor=north west,font=\sffamily\small\color{navy!80},align=left]
+    at ([xshift=2.2cm,yshift=-19.2cm]current page.north west) {agsweeney@gmail.com};
+
+  \draw[rulegray,line width=0.6pt]
+    ([xshift=2.2cm,yshift=-21.2cm]current page.north west) -- ([xshift=-2.2cm,yshift=-21.2cm]current page.north east);
+  \node[anchor=north west,font=\sffamily\footnotesize\color{steel},align=left,text width=8.5cm]
+    at ([xshift=2.2cm,yshift=-21.6cm]current page.north west)
+    {Written in ASD-STE100 Simplified Technical English.\\
+     Edited to \textit{The Chicago Manual of Style}, 18th edition.};
+  \node[anchor=north east,font=\sffamily\footnotesize\color{steel},align=right]
+    at ([xshift=-2.2cm,yshift=-21.6cm]current page.north east)
+    {\docdate\\MIT License};
+\end{tikzpicture}
+\end{titlepage}
+
+% =========================================================================
+% Copyright page (verso)
+% =========================================================================
+\newpage
+\thispagestyle{empty}
+\vspace*{\fill}
+{\small\raggedright
+\textbf{QuickEIP Programming and Implementation Manual}\\
+Document \docnumber, \docrevision, \docdate\\
+For QuickEIP software version \swversion
+
+\bigskip
+Copyright \textcopyright\ 2026 Adam G. Sweeney. All rights reserved.
+
+\medskip
+The QuickEIP software is released under the MIT License. The full license
+text is in the file \file{LICENSE} at the root of the source repository. The
+software is supplied ``as is,'' without warranty of any kind.
+
+\medskip
+EtherNet/IP\texttrademark\ and CIP\texttrademark\ are trademarks of ODVA,
+Inc. ASD-STE100\textsuperscript{\textregistered} is a trademark of ASD
+(AeroSpace, Security and Defence Industries Association of Europe). All other
+product names are trademarks of their respective owners. Their use in this
+manual identifies products and does not imply endorsement.
+
+\medskip
+\textbf{Status of tests.} Each platform section of this manual states what
+has been built, what has been run, and what has been tested with a
+programmable logic controller (PLC). A successful build does not show that a
+port operates on a network. Do the hardware tests in chapter~\ref{ch:porting}
+before you use QuickEIP in a product.
+
+\medskip
+\textbf{Editorial conventions.} This manual uses ASD-STE100 Simplified
+Technical English for its text and \textit{The Chicago Manual of Style},
+18th edition, for its apparatus: capitalization of titles, punctuation,
+numbers, captions, notes, and bibliography. The preface gives the details.
+
+\bigskip
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Revision} & \textbf{Change} \\
+\midrule
+A, \docdate & First issue, for software version \swversion. \\
+\bottomrule
+\end{tabular}
+}
+\vspace*{1cm}
+
+% =========================================================================
+% Contents and lists
+% =========================================================================
+\cleardoublepage
+\pagestyle{fancy}
+\pdfbookmark[0]{Contents}{toc}
+\tableofcontents
+\cleardoublepage
+\phantomsection\addcontentsline{toc}{chapter}{Figures}
+\listoffigures
+\phantomsection\addcontentsline{toc}{chapter}{Tables}
+\listoftables
+
+\include{chapters/preface}
+
+% =========================================================================
+% Main text
+% =========================================================================
+\mainmatter
+\include{chapters/ch01-introduction}
+\include{chapters/ch02-architecture}
+\include{chapters/ch03-build}
+\include{chapters/ch04-adapter}
+\include{chapters/ch05-plc}
+\include{chapters/ch06-scanner}
+\include{chapters/ch07-platforms}
+\include{chapters/ch08-porting}
+\include{chapters/ch09-troubleshooting}
+
+\appendix
+\include{chapters/appA-api}
+\include{chapters/appB-types}
+\include{chapters/appC-codes}
+\include{chapters/appD-tools}
+
+\backmatter
+\include{chapters/glossary}
+\include{chapters/bibliography}
+\include{chapters/funcindex}
+
+\end{document}

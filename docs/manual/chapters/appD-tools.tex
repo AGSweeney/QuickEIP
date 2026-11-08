@@ -1,0 +1,199 @@
+\chapter{Tools, Samples, and Migration}\label{app:tools}
+
+\section{eiptool}\label{sec:eiptool}
+
+\code{eiptool} is a command-line scanner and test adapter. It uses the host
+port (POSIX or Windows). Its source is \file{examples/posix_eiptool/eiptool.c},
+and it uses most of the scanner API.
+
+\begin{table}[htbp]
+\centering
+\caption{eiptool commands}\label{tab:eiptool}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.50\linewidth}L@{}}
+\toprule
+\textbf{Command} & \textbf{Action} \\
+\midrule
+\code{eiptool scan} & Broadcast ListIdentity and list the devices. \\
+\code{eiptool identity <ip>} & Read the identity of one device. \\
+\code{eiptool tags <ip> [slot]} & List the tags of a controller. \\
+\code{eiptool read <ip> <tag> [slot]} & Read a tag. \\
+\code{eiptool write <ip> <tag> <type> <value> [slot]} & Write a tag. \code{type} is \code{dint}, \code{int}, \code{sint}, \code{real}, or \code{bool}. \\
+\code{eiptool get <ip> <class> <instance> <attribute> [slot]} & Get\_Attribute\_Single. \\
+\code{eiptool adapter} & Run the built-in test adapter until you stop it. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+These rules apply:
+
+\begin{itemize}
+  \item \code{slot} is $-1$ by default.
+  \item Numbers can be decimal or hexadecimal with \code{0x}.
+  \item Set \code{EIP_NETIF=}\textit{name} to select the interface that the
+        adapter reports and that the scan uses first.
+  \item Explicit messages operate on \code{127.0.0.1}. Class~1 needs the
+        address that the adapter reports.
+\end{itemize}
+
+\begin{lstlisting}[language=shell]
+./build/eiptool adapter &
+./build/eiptool get 127.0.0.1 4 101 3    # test assembly: 11 22 33 44 55 66 77 88
+./build/eiptool get 192.168.1.10 0x01 1 7  # class instance attribute
+./build/eiptool write 192.168.1.10 MyDint dint 42
+\end{lstlisting}
+
+\section{Examples in the Repository}
+
+\begin{table}[htbp]
+\centering
+\caption{Example programs}\label{tab:examples}
+\begin{tabularx}{\linewidth}{@{}P{0.34\linewidth}L@{}}
+\toprule
+\textbf{Directory} & \textbf{Shows} \\
+\midrule
+\file{examples/netburner_adapter} & An adapter on NetBurner, and an optional scanner tag read. \\
+\file{examples/esp_idf_adapter} & An adapter as an ESP-IDF project. \\
+\file{examples/clearcore_adapter} & A poll-mode adapter that controls ClearCore I/O. \\
+\file{examples/posix_eiptool} & \code{eiptool}, with most of the scanner API. \\
+\file{examples/eds} & A sample EDS file that agrees with the examples. \\
+\file{examples/netburner_webui} & A browser test page. Application code, not part of the stack. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Sample EDS File}\label{sec:edssample}
+
+These are the device, assembly, and connection sections of
+\file{examples/eds/QuickEIP_Adapter.eds}. They agree with the assemblies in
+section~\ref{sec:start}. Vendor code 65000 is a placeholder.
+
+\begin{lstlisting}[language=eds,basicstyle=\ttfamily\footnotesize]
+[Device]
+        VendCode = 65000;
+        VendName = "QuickEIP Sample";
+        ProdType = 43;
+        ProdTypeStr = "Generic Device";
+        ProdCode = 1;
+        MajRev = 1;
+        MinRev = 1;
+        ProdName = "My Device";
+        Catalog = "My Device";
+
+[Assembly]
+        Revision = 2;
+        Object_Name = "Assembly Object";
+        Object_Class_Code = 0x04;
+        Number_Of_Static_Instances = 3;
+        Assem100 =
+                "Inputs",               $ device -> PLC (EIP_ASM_PRODUCED)
+                "20 04 24 64 30 03",    $ path
+                32,                     $ size in bytes
+                0x0000,                 $ descriptor
+                ,,                      $ reserved
+                256,;                   $ member size in bits
+        Assem150 =
+                "Outputs",              $ PLC -> device (EIP_ASM_CONSUMED)
+                "20 04 24 96 30 03",
+                32,
+                0x0001,
+                ,,
+                256,;
+        Assem151 =
+                "Config",               $ configuration, no data
+                "20 04 24 97 30 03",
+                0,
+                0x0000,
+                ,,
+                0,Param2;
+
+[Connection Manager]
+        Connection1 =
+                0x04010002,             $ class 1, cyclic, exclusive owner
+                0x44640405,             $ O->T p2p, fixed, run/idle; T->O mcast or p2p
+                Param1,32,Assem150,     $ O->T RPI, size, format
+                Param1,32,Assem100,     $ T->O RPI, size, format
+                ,,                      $ config part 1 (none)
+                0,Param2,               $ config part 2: size, format
+                "Exclusive Owner",      $ name
+                "",                     $ help
+                "20 04 24 97 2C 96 2C 64";  $ config 151, consume 150, produce 100
+
+[Capacity]
+        MaxIOConnections = 1;
+        MaxMsgConnections = 2;
+        TSpec1 = Rx, 32, 100;
+        TSpec2 = Tx, 32, 100;
+\end{lstlisting}
+
+\section{Migration from QuickEIP 1.x}\label{sec:migration}
+
+QuickEIP 2.0 replaces the NetBurner-only version 1.x with a portable library.
+The adapter has these new functions: a configurable identity and
+assemblies, a shared assembly data pool, multicast \TO, the TCP/IP Interface
+and Ethernet Link objects, a settable IP configuration, Identity Reset, and
+checks of the input. The sizes are now in \file{eip_config.h}.
+
+\begin{procedure}{Change a 1.x NetBurner build to 2.0}
+\begin{enumerate}
+  \item Remove the old source lines for \file{eip_session.cpp},
+        \file{eip_io.cpp}, and \file{eip_adapter_task.cpp} from the makefile.
+  \item Add the source list of section~\ref{sec:netburner}.
+  \item Change all timeouts from ticks to milliseconds (table~\ref{tab:migration}).
+  \item Change \code{eip_adapter_start()} to \code{eip_adapter_start(0)}, or
+        give a configuration.
+  \item If you need the 1.x timeout, set \code{cfg.timeout_floor_ms = 2000}.
+  \item If you use the web UI, add the files from
+        \file{examples/netburner_webui/}.
+\end{enumerate}
+\end{procedure}
+
+\begin{caution}
+All timeouts are now in milliseconds. A value of \code{TICKS_PER_SECOND} (20)
+that meant 1~s in version 1.x now means 20~ms. Examine each timeout argument.
+\end{caution}
+
+\begin{longtable}{@{}P{0.30\linewidth}P{0.30\linewidth}P{0.34\linewidth}@{}}
+\caption{API changes from version 1.x}\label{tab:migration}\\
+\toprule
+\textbf{1.x} & \textbf{2.0} & \textbf{Notes} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{1.x} & \textbf{2.0} & \textbf{Notes} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{EipOpenConfig.timeout_ticks} & \code{timeout_ms} & \code{TICKS_PER_SECOND * 5} becomes \code{5000}. \\
+\code{eip_list_identity(ip, id, ticks)} & \code{(ip, id, ms)} & \\
+\code{eip_scan_devices(d, n, ticks)} & \code{(d, n, ms)} & 0 still selects the default (3~s). \\
+\code{eip_io_consume(io, d, n, ticks)} & \code{(io, d, n, ms)} & \\
+\code{session.tcp_fd > 0} & \code{eip_session_is_open(\&session)} & The field is now \code{sock}, and 0 is a valid handle. \\
+\code{io.udp_fd} & \code{io.sock} & \\
+\code{EipSession.timeout_ticks} & \code{timeout_ms} & \\
+\code{eip_adapter_start(void)} & \code{eip_adapter_start(const EipAdapterConfig *)} & Give 0 for the old behavior. \\
+\code{EIP_MAX_PACKET} (enum) & Macro in \file{eip_config.h} & Same value. You can now change it. \\
+\code{EIP_ADAPTER_ASSEMBLIES} (4) & \code{EIP_ADAPTER_MAX_ASSEMBLIES} (8) & The old name is still an alias. \\
+\file{src/eip_port.h} & \file{src/eip_internal.h} & Internal header, new name. \\
+\file{src/eip_adapter.h} & \file{include/eip_adapter.h} & Now public (the sans-I/O core). \\
+\code{EipAdapterView} & More fields & Added \code{ip}, \code{multicast}, \code{rpi_us}, \code{timeout_ms}, \code{opens}, \code{timeouts}, \code{rx_dropped_*}, \code{rx_idle}, \code{udp_replies_dropped}, \code{tcp_clients}. \\
+\end{longtable}
+
+Changes of behavior:
+
+\begin{itemize}
+  \item The inactivity timeout now comes from the \OT{} RPI
+        (equation~\ref{eq:timeout}). Version 1.x used the \TO{} interval and a
+        2~s minimum.
+  \item The Identity status now shows ``configured'' (table~\ref{tab:idstatus}).
+  \item An unknown assembly instance answers CIP \hex{16}, not \hex{05}.
+  \item Consumed data goes to all zeros on idle or timeout, as in version
+        1.x. On idle, the adapter clears only the consumed point of the
+        connection.
+  \item The adapter accepts up to four TCP clients, not two. When all slots
+        are busy, it drops a session that has been silent for 60~s.
+  \item The 16-bit sequence count is still used for originators that send no
+        Sequenced Address item. A repeated count keeps the connection open but
+        does not replace the data. An older count is dropped.
+\end{itemize}

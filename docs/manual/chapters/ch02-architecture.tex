@@ -1,0 +1,211 @@
+\chapter{Architecture}\label{ch:arch}
+
+\section{Layers}
+
+QuickEIP has three layers. Your application calls the public interface. The
+portable core contains all protocol logic. The port connects the core to one
+platform. Figure~\ref{fig:layers} shows the layers and the files in each.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\sffamily\small,
+  box/.style={draw=steel,fill=white,rounded corners=2pt,minimum height=0.62cm,inner sep=3pt,align=center},
+  core/.style={box,fill=white,minimum width=2.95cm,text width=2.8cm,minimum height=0.8cm,font=\sffamily\scriptsize},
+  port/.style={box,fill=teal!12,draw=teal,minimum width=2.25cm},
+  shared/.style={box,fill=teal!28,draw=teal,minimum height=0.5cm,font=\sffamily\scriptsize},
+  lbl/.style={font=\sffamily\scriptsize\bfseries\color{steel}}]
+
+  % application
+  \node[box,fill=navy,text=white,minimum width=12.6cm,minimum height=0.75cm] (app) at (0,6.75) {\bfseries Your application};
+
+  % API headers
+  \node[box,minimum width=6.1cm,text width=5.9cm,minimum height=0.95cm] (apiA) at (-3.25,5.55)
+    {{\ttfamily\footnotesize eip.h}\\[-1pt]{\scriptsize scanner and built-in adapter}};
+  \node[box,minimum width=6.1cm,text width=5.9cm,minimum height=0.95cm] (apiB) at ( 3.25,5.55)
+    {{\ttfamily\footnotesize eip\_server.h\quad eip\_adapter.h}\\[-1pt]{\scriptsize your own adapter instance or event loop}};
+  \draw[-Stealth,steel] (app.south -| apiA) -- (apiA);
+  \draw[-Stealth,steel] (app.south -| apiB) -- (apiB);
+
+  % core
+  \node[lbl,anchor=west] at (-6.1,4.45) {SCANNER};
+  \node[lbl,anchor=west] at ( 0.15,4.45) {ADAPTER};
+  \node[font=\sffamily\scriptsize\color{steel},anchor=east] at (6.1,4.45) {\ttfamily src/\ \sffamily portable C99, no OS calls};
+  \node[core] (s1) at (-4.72,3.75) {{\ttfamily\footnotesize eip\_session}\\[-1pt] tags, messages};
+  \node[core] (s2) at (-4.72,2.80) {{\ttfamily\footnotesize eip\_io}\\[-1pt] Class 1 originator};
+  \node[core] (s3) at (-1.57,3.75) {{\ttfamily\footnotesize eip\_scan}\\[-1pt] discovery};
+  \node[core] (a1) at ( 1.57,3.75) {{\ttfamily\scriptsize eip\_adapter\_default}\\[-1pt] built-in instance};
+  \node[core] (a2) at ( 1.57,2.80) {{\ttfamily\footnotesize eip\_server}\\[-1pt] sockets and timing};
+  \node[core] (a3) at ( 4.72,2.80) {{\ttfamily\footnotesize eip\_adapter}\\[-1pt] sans-I/O core};
+  \draw[-Stealth,steel!70] (a1) -- (a2);
+  \draw[-Stealth,steel!70] (a2) -- (a3);
+  \draw[-Stealth,steel!70] (s2) -- (s1);
+  \node[core,minimum width=12.4cm,text width=12.2cm] (codec) at (0,1.85)
+    {{\ttfamily\footnotesize eip\_codec}\quad packet encoding and parsing, used by both roles};
+  \begin{scope}[on background layer]
+    \node[draw=steel,dashed,rounded corners=4pt,fit=(s1)(s2)(s3)(a1)(a3)(codec),inner xsep=6pt,inner ysep=6pt,yshift=4pt,minimum height=3.6cm,fill=steel!5] (coreframe) {};
+  \end{scope}
+
+  % HAL bar
+  \node[box,fill=steel,text=white,minimum width=12.6cm] (hal) at (0,0.65) {{\ttfamily eip\_hal.h}\quad port contract: 19 functions};
+  \draw[-Stealth,steel] (codec.south) -- (hal.north);
+
+  % ports
+  \foreach \n/\x/\t in {pn/-5.2/netburner,pe/-2.6/esp-idf,pp/0/posix,pc/2.6/clearcore,pw/5.2/windows}{
+    \node[port] (\n) at (\x,-0.55) {\ttfamily \t};
+    \draw[steel] (hal.south -| \n) -- (\n.north);
+  }
+  \node[shared,minimum width=4.85cm] (bsd) at (-1.3,-1.45) {\ttfamily ports/bsd\_sockets};
+  \node[shared,minimum width=2.25cm] (lw) at (2.6,-1.45) {\ttfamily ports/lwip\_raw};
+  \draw[teal] (pe.south) -- (pe.south |- bsd.north);
+  \draw[teal] (pp.south) -- (pp.south |- bsd.north);
+  \draw[teal] (pc.south) -- (lw.north);
+\end{tikzpicture}
+\caption{The layers of QuickEIP. Arrows show the direction of calls. The
+shared socket layers are reused by more than one platform port.}
+\label{fig:layers}
+\end{figure}
+
+An application that has its own event loop can call the sans-I/O core in
+\file{include/eip_adapter.h} directly. Most applications use \file{eip.h}
+only.
+
+\section{Source Files}\label{sec:sources}
+
+Each build compiles three groups of files: the core, one port, and the
+include paths. Table~\ref{tab:groups} lists them.
+
+\begin{table}[htbp]
+\centering
+\caption{File groups in each build}\label{tab:groups}
+\begin{tabularx}{\linewidth}{@{}P{0.16\linewidth}P{0.40\linewidth}L@{}}
+\toprule
+\textbf{Group} & \textbf{Files} & \textbf{Notes} \\
+\midrule
+Core & \file{src/eip_codec.c}, \file{src/eip_adapter.c},
+\file{src/eip_session.c}, \file{src/eip_io.c}, \file{src/eip_scan.c},
+\file{src/eip_server.c}, \file{src/eip_adapter_default.c}
+& The same on all platforms. C99, no OS calls. \\
+Port & One platform directory under \file{ports/}, plus a shared socket
+layer for some platforms & Implements \file{include/eip_hal.h}. \\
+Include paths & \file{include/} (public) and \file{src/} (internal headers
+that the core needs) & Add both to the C and C++ compilers. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+You can omit a core file if you do not use its functions.
+Table~\ref{tab:corefiles} shows what each file is necessary for.
+
+\begin{table}[htbp]
+\centering
+\caption{Core files and their functions}\label{tab:corefiles}
+\begin{tabularx}{\linewidth}{@{}P{0.36\linewidth}L@{}}
+\toprule
+\textbf{File} & \textbf{Necessary for} \\
+\midrule
+\file{eip_codec.c} & All functions. \\
+\file{eip_adapter.c}, \file{eip_server.c} & The adapter. \\
+\file{eip_adapter_default.c} & \code{eip_adapter_start} and the other
+built-in-instance calls. Holds a static \code{EipServer} of approximately
+11~KB. \\
+\file{eip_session.c} & Scanner sessions, tags, explicit messages, and
+symbols. \\
+\file{eip_io.c} & Scanner Class~1 I/O. Needs \file{eip_session.c}. \\
+\file{eip_scan.c} & \code{eip_list_identity} and \code{eip_scan_devices}. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{note}
+\notelabel If you link with \code{-ffunction-sections -fdata-sections
+-Wl,--gc-sections}, the linker removes the functions that you do not call.
+Thus you can usually keep all the core files in the build.
+\end{note}
+
+\section{Execution Model}\label{sec:threads}
+
+\subsection{The Adapter Context}
+
+The adapter core runs in one context. On an RTOS port, this context is a task
+that the port starts. On a bare-metal port, this context is your main loop,
+which calls \code{eip_adapter_poll}. Table~\ref{tab:runmodes} compares the two
+modes.
+
+\begin{table}[htbp]
+\centering
+\caption{How the adapter runs}\label{tab:runmodes}
+\begin{tabularx}{\linewidth}{@{}P{0.24\linewidth}P{0.26\linewidth}L@{}}
+\toprule
+\textbf{Mode} & \textbf{Ports} & \textbf{What you do} \\
+\midrule
+Task (RTOS) & NetBurner, ESP-IDF, POSIX, Windows & Nothing. \code{eip_adapter_start} starts a task. Do not call \code{eip_adapter_poll}. \\
+Poll (bare metal) & ClearCore, other lwIP raw-API boards, Windows with \code{EIP_WIN_POLL_MODE} & Call \code{eip_adapter_poll} on each pass of the main loop, at intervals shorter than your fastest RPI. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{caution}
+Do not call \code{eip_adapter_poll} on an RTOS port. A task already runs the
+adapter there. Two contexts that run the core at the same time can corrupt
+the adapter state.
+\end{caution}
+
+\subsection{Rules for Tasks}
+
+\begin{itemize}
+  \item \code{eip_adapter_read}, \code{eip_adapter_write}, and
+        \code{eip_adapter_snapshot} are safe from any task. They take
+        \code{eip_hal_lock} for some microseconds. The lock is never held
+        during a socket call.
+  \item One task at a time can use a given \code{EipSession} or
+        \code{EipIo}. Different sessions can run in different tasks.
+  \item Scanner calls block until they are complete or until their timeout.
+        On an RTOS, call them from a task of their own.
+  \item On bare metal, a blocking scanner call keeps the network stack in
+        operation, and the adapter sockets continue to receive packets. But
+        the remainder of your main loop stops until the call returns.
+  \item Do not call QuickEIP from an interrupt handler.
+\end{itemize}
+
+\section{Memory}\label{sec:memory}
+
+QuickEIP uses no heap in the protocol code. Its RAM is static, or it is in
+structures that you supply. Let $P$ be \code{EIP_MAX_PACKET} and let $C$ be
+\code{EIP_ADAPTER_MAX_CLIENTS}. Then these approximations apply:
+\begin{align}
+  M_{\text{server}}  &\approx P\,(C + 3), \label{eq:server}\\
+  M_{\text{session}} &\approx 3P. \label{eq:session}
+\end{align}
+With the defaults $P = 1536$ and $C = 4$, equation~\eqref{eq:server} gives
+\num{10752} bytes, and equation~\eqref{eq:session} gives \num{4608} bytes plus
+some fields. Table~\ref{tab:ram} gives the totals.
+
+\begin{table}[htbp]
+\centering
+\caption{RAM with the default settings}\label{tab:ram}
+\begin{tabularx}{\linewidth}{@{}P{0.38\linewidth}L@{}}
+\toprule
+\textbf{Item} & \textbf{RAM} \\
+\midrule
+Built-in adapter & Approximately 11~KB static, plus a 1.5~KB shared reply buffer. \\
+Each \code{EipSession} & Approximately 4.7~KB. \\
+Each \code{EipIo} & Approximately 100 bytes, plus a 1.5~KB stack buffer during produce and consume. \\
+Scanner calls & Up to approximately 2~KB of caller stack. A tag write builds requests of 400 bytes. \\
+Code, all functions & Approximately 24~KB at \code{-Os} on a Cortex-M4. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{caution}
+An \code{EipSession} is too large for most task stacks. Declare it
+\code{static}, or put it in memory that you allocate one time at start-up.
+A session on a small stack causes a stack overflow.
+\end{caution}
+
+The assembly data of the adapter comes from one pool. The sum of the sizes
+$s_i$ of all assemblies must fit in it:
+\begin{equation}
+  \sum_{i=1}^{N} s_i \le \code{EIP_ADAPTER_DATA_POOL}, \qquad N \le \code{EIP_ADAPTER_MAX_ASSEMBLIES}.
+  \label{eq:pool}
+\end{equation}

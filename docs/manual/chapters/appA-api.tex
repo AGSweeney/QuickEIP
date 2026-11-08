@@ -1,0 +1,373 @@
+\chapter{API Reference}\label{app:api}
+
+This appendix describes each public function. The source is the comments in
+\file{include/}. Unless an entry gives a different rule, a function that
+returns \code{int} returns \code{EIP_OK} or a negative \code{EIP_ERR_*} code
+(table~\ref{tab:retcodes}). In a parameter pair such as \code{data} and
+\code{data_len}, \code{data_len} is the capacity on input and the byte count
+on output.
+
+\newcommand{\ret}{\par\noindent\textsf{\small\textbf{Returns:}}\ }
+\newcommand{\thr}{\par\noindent\textsf{\small\textbf{Context:}}\ }
+
+% =========================================================================
+\section{Utilities (\file{eip.h})}
+
+\api{eip_status_text}{const char *eip_status_text(int code);}
+Gives a short English text for an \code{EIP_OK} or \code{EIP_ERR_*} code.
+\ret A static string. Never null.
+
+\api{eip_parse_ipv4}{int eip_parse_ipv4(const char *text, uint8_t ip[4]);}
+Parses dotted-quad IPv4 text, for example \code{"192.168.1.10"}, into four
+bytes in network order.
+\ret \code{EIP_OK} or \code{EIP_ERR_ARG}.
+
+\api{eip_store_le16}{static inline void eip_store_le16(uint8_t *p, uint16_t value);}
+Writes \code{value} at \code{p} in little-endian order (two bytes).
+
+\api{eip_store_le32}{static inline void eip_store_le32(uint8_t *p, uint32_t value);}
+Writes \code{value} at \code{p} in little-endian order (four bytes).
+
+\api{eip_load_le16}{static inline uint16_t eip_load_le16(const uint8_t *p);}
+Reads a little-endian 16-bit value at \code{p}.
+
+\api{eip_load_le32}{static inline uint32_t eip_load_le32(const uint8_t *p);}
+Reads a little-endian 32-bit value at \code{p}. To get a signed DINT, cast the
+result to \code{int32_t}.
+
+% =========================================================================
+\section{Scanner Sessions (\file{eip.h})}
+
+\api{eip_session_open}{int eip_session_open(EipSession *session, const EipOpenConfig *config);}
+Connects to the device and registers a session. The function writes over
+\code{*session}, so close an open session first. \code{config->slot} must be
+$-1$ to 255. The call blocks for up to \code{timeout_ms} for the connection,
+and again for the reply.
+\ret \code{EIP_OK}. \code{EIP_ERR_CONNECT} if TCP cannot connect.
+\code{EIP_ERR_PROTOCOL} if the device refuses the registration. Then
+\code{eip_last_encap_status} gives the reason.
+
+\api{eip_session_close}{void eip_session_close(EipSession *session);}
+Sends UnregisterSession without a wait for an answer, and closes the socket.
+Safe on a closed or zeroed session. Close all \code{EipIo} connections on the
+session first, because \code{eip_io_close} needs the session to send
+Forward\_Close.
+
+\api{eip_session_set_slot}{void eip_session_set_slot(EipSession *session, int16_t slot);}
+Changes the routing of later requests on an open session. The function
+ignores a slot outside $-1$ to 255.
+
+\api{eip_session_is_open}{int eip_session_is_open(const EipSession *session);}
+\ret 1 if the session is registered here, else 0. Safe on a zeroed structure.
+It does not find a lost peer. After \code{EIP_ERR_IO}, close the session and
+open it again.
+
+\api{eip_last_cip_status}{uint8_t eip_last_cip_status(const EipSession *session);}
+\ret The general status of the last CIP reply. 0 for a null session.
+
+\api{eip_last_cip_extended}{uint16_t eip_last_cip_extended(const EipSession *session);}
+\ret The extended status of the last CIP reply. 0 for a null session.
+
+\api{eip_last_encap_status}{uint32_t eip_last_encap_status(const EipSession *session);}
+\ret The status field of the last encapsulation reply. 0 for a null session.
+
+% =========================================================================
+\section{Discovery (\file{eip.h})}
+
+\api{eip_list_identity}{int eip_list_identity(const char *ip, EipIdentity *identity, uint32_t timeout_ms);}
+Sends a UDP ListIdentity to one address. It does not need an open session.
+A \code{timeout_ms} of 0 waits 2~s.
+\ret \code{EIP_OK}, or \code{EIP_ERR_TIMEOUT} if no reply arrives.
+
+\api{eip_scan_devices}{int eip_scan_devices(EipDevice *devices, uint16_t *devices_len, uint32_t timeout_ms);}
+Sends a broadcast ListIdentity on each interface and to the global broadcast
+address. \code{devices_len} is the array capacity on input and the number of
+different devices on output. A \code{timeout_ms} of 0 waits approximately
+3~s, sends again each second, and returns 0.5~s after the last reply. A
+device is marked \code{micro800} if its vendor is 1 and its name contains
+\code{"2080-"}, \code{"2085-"}, or \code{"micro8"}.
+\ret \code{EIP_OK}. A count of 0 means that the scan ran and no device
+answered.
+
+\api{eip_device_kind}{int eip_device_kind(uint16_t vendor_id, const char *product_name);}
+Sorts a ListIdentity product name with Rockwell catalog heuristics. The
+function tests for Micro800 before CompactLogix.
+\ret \code{EIP_KIND_MICRO800}, \code{EIP_KIND_COMPACTLOGIX}, or
+\code{EIP_KIND_ASSEMBLY}.
+
+\api{eip_list_symbols}{int eip_list_symbols(EipSession *session, EipSymbol *symbols, uint16_t *symbols_len);}
+Reads the Symbol object (class \hex{6B}, service \hex{55}) on an open session.
+\code{symbols_len} is the capacity on input and the count stored on output.
+Open a Micro800 with slot $-1$. If a later page fails, the count still gives
+the symbols stored before the failure.
+
+% =========================================================================
+\section{Explicit Messages and Tags (\file{eip.h})}
+
+\api{eip_cip}{int eip_cip(EipSession *session, uint8_t service, const uint8_t *path, uint16_t path_len, const uint8_t *request, uint16_t request_len, uint8_t *response, uint16_t *response_len, uint8_t *cip_status, uint16_t *extended_status);}
+Sends one explicit message and waits for the reply. \code{path} is the raw
+path bytes, without the path-size word. \code{response} and
+\code{response_len} can both be 0 to discard the reply data.
+\code{cip_status} and \code{extended_status} can be 0. The encoded request has
+a limit of 480 bytes.
+\ret \code{EIP_OK}. \code{EIP_ERR_CIP} for a general status that is not 0,
+except \hex{06} (partial transfer), which gives \code{EIP_OK} with the status
+in \code{*cip_status}. \code{EIP_ERR_TOO_BIG} if the reply data does not fit
+in \code{response}.
+
+\api{eip_get_attribute}{int eip_get_attribute(EipSession *session, uint16_t class_code, uint16_t instance, uint16_t attribute, uint8_t *data, uint16_t *data_len, uint8_t *cip_status);}
+Sends Get\_Attribute\_Single.
+
+\api{eip_set_attribute}{int eip_set_attribute(EipSession *session, uint16_t class_code, uint16_t instance, uint16_t attribute, const uint8_t *data, uint16_t data_len, uint8_t *cip_status);}
+Sends Set\_Attribute\_Single. \code{data} is the attribute value, without a
+type prefix.
+
+\api{eip_tag_read}{int eip_tag_read(EipSession *session, const char *tag, uint16_t elements, uint8_t *data, uint16_t *data_len, uint16_t *cip_type, uint8_t *cip_status);}
+Reads \code{elements} elements of a Logix tag. Tag names use a period for
+members and \code{[n]} or \code{[n,m]} for elements. \code{cip_type}
+receives the CIP type of the tag. \code{cip_type} and \code{cip_status} can
+be 0. A reply too large for one packet continues with Read Tag Fragmented
+until the device reports the end.
+
+\api{eip_tag_write}{int eip_tag_write(EipSession *session, const char *tag, uint16_t cip_type, uint16_t elements, const uint8_t *data, uint16_t data_len, uint8_t *cip_status);}
+Writes \code{elements} elements of type \code{cip_type}. \code{data} is
+little-endian element data. \code{cip_status} can be 0. Data larger than one
+request (no more than 400 bytes, less for a long tag path) goes out with
+Write Tag Fragmented. An error during the write can leave the earlier
+fragments written.
+
+% =========================================================================
+\section{Class 1 Originator (\file{eip.h})}
+
+\api{eip_io_open}{int eip_io_open(EipSession *session, EipIo *io, const EipIoConfig *config);}
+Sends a Forward\_Open and binds a UDP socket. The connection size sent to the
+target is 2 bytes of sequence count, plus 4 bytes if \code{run_idle} is set,
+plus the assembly size. The function binds UDP 2223--2231 unless
+\code{local_port} is set. Assemblies have a limit of 600 bytes in each
+direction.
+\ret \code{EIP_OK}. \code{EIP_ERR_CIP} if the target refuses the
+Forward\_Open. \code{EIP_ERR_TOO_BIG} if a size is more than the limit.
+\code{EIP_ERR_STATE} if the session is not open. \code{EIP_ERR_IO} if no UDP
+port can be bound, or if the session is broken. After a lost connection,
+close and open the session (section~\ref{sec:recover}).
+
+\api{eip_io_produce}{int eip_io_produce(EipIo *io, const uint8_t *data, uint16_t data_len, int run);}
+Sends one \OT{} packet. Call it one time each RPI. The library does not set
+the interval. \code{data_len} must be equal to \code{output_bytes}.
+\code{run} sets the run/idle header, if the connection has one.
+
+\api{eip_io_consume}{int eip_io_consume(EipIo *io, uint8_t *data, uint16_t *data_len, uint32_t timeout_ms);}
+Waits for the next \TO{} packet of this connection and copies
+\code{input_bytes} of it. The function skips packets for other connections. A
+\code{timeout_ms} of 0 waits 1~s. There is no non-blocking form.
+\ret \code{EIP_ERR_TIMEOUT} if no packet arrives. This is how a lost
+connection shows, because \code{eip_io_produce} continues to succeed.
+
+\api{eip_io_close}{int eip_io_close(EipSession *session, EipIo *io);}
+Sends Forward\_Close if the session is still open. Then it releases the UDP
+socket, whatever the result.
+
+% =========================================================================
+\section{Built-In Adapter (\file{eip.h})}
+
+\api{eip_adapter_start}{int eip_adapter_start(const EipAdapterConfig *config);}
+Copies what it needs from \code{config} and listens on TCP and UDP 44818 and
+UDP 2222. \code{config} can be 0 for the test identity and assemblies. RTOS
+ports start a task. Poll-mode ports start nothing.
+\ret \code{EIP_OK}. \code{EIP_ERR_STATE} if the adapter is already started.
+\code{EIP_OK} does not mean ``listening'': see \code{EipAdapterView.listening}.
+
+\api{eip_adapter_poll}{uint32_t eip_adapter_poll(void);}
+Does one non-blocking pass of the adapter. Call it from the main loop on
+poll-mode ports only.
+\ret The milliseconds until the adapter next needs a call.
+
+\api{eip_adapter_snapshot}{int eip_adapter_snapshot(EipAdapterView *view);}
+Copies the adapter state into \code{*view}. Safe from any task.
+\ret \code{EIP_OK}, or \code{EIP_ERR_STATE} before a successful start.
+
+\api{eip_adapter_read}{int eip_adapter_read(uint16_t instance, uint8_t *data, uint16_t *data_len);}
+Copies the data of an assembly. A capacity smaller than the assembly size is
+\code{EIP_ERR_TOO_BIG}. A consumed assembly reads as zeros after a timeout or
+a close and while the scanner is idle. Before the first connection, it reads
+as its initial data. Safe from any task.
+\ret \code{EIP_OK}, \code{EIP_ERR_PATH} for an unknown instance,
+\code{EIP_ERR_TOO_BIG}, or \code{EIP_ERR_STATE} before a start.
+
+\api{eip_adapter_write}{int eip_adapter_write(uint16_t instance, const uint8_t *data, uint16_t data_len);}
+Replaces the data of an assembly, usually a produced one. The next \TO{}
+packet carries it. \code{data_len} must be equal to the assembly size. Safe
+from any task.
+
+% =========================================================================
+\section{Adapter Server (\file{eip_server.h})}
+
+An \code{EipServer} is approximately \code{EIP_MAX_PACKET} $\times$
+(\code{EIP_ADAPTER_MAX_CLIENTS} + 3) bytes. \code{init}, \code{poll},
+\code{service}, and \code{close} run in one context. \code{read},
+\code{write}, and \code{snapshot} are safe from any task.
+
+\api{eip_server_init}{int eip_server_init(EipServer *server, const EipAdapterConfig *config);}
+Sets up the adapter and tries to open its sockets. \code{config} can be 0
+for the test identity and assemblies. The poll function tries again each
+second to open sockets that failed. Thus \code{EIP_OK} does not mean
+``listening.''
+
+\api{eip_server_poll}{uint32_t eip_server_poll(EipServer *server);}
+Does one non-blocking pass. It opens the sockets if necessary, reads the
+interface values again, takes Class~1 input, answers UDP 44818, serves and
+accepts TCP clients, checks timeouts, sends the \TO{} packets that are due,
+and runs the deferred callbacks.
+\ret The milliseconds until the next \TO{} packet, with a limit of
+\code{EIP_ADAPTER_IDLE_WAIT_MS}.
+
+\api{eip_server_service}{void eip_server_service(EipServer *server, uint32_t max_wait_ms);}
+Waits for socket activity through \code{eip_hal_wait}, for the shorter of
+\code{max_wait_ms} and the next \TO{} deadline. Then it polls. This is the
+body of an adapter task.
+
+\api{eip_server_close}{void eip_server_close(EipServer *server);}
+Closes all sockets. You can initialize the server again after this call. The
+call does nothing on a server that is not initialized.
+
+\api{eip_server_snapshot}{int eip_server_snapshot(EipServer *server, EipAdapterView *view);}
+The same as \code{eip_adapter_snapshot}, for this instance.
+
+\api{eip_server_read}{int eip_server_read(EipServer *server, uint16_t instance, uint8_t *data, uint16_t *data_len);}
+The same as \code{eip_adapter_read}, for this instance.
+
+\api{eip_server_write}{int eip_server_write(EipServer *server, uint16_t instance, const uint8_t *data, uint16_t data_len);}
+The same as \code{eip_adapter_write}, for this instance.
+
+\api{eip_adapter_default_server}{EipServer *eip_adapter_default_server(void);}
+\ret The instance behind \code{eip_adapter_start} and \code{eip_adapter_poll}.
+
+% =========================================================================
+\section{Port Extras}
+
+\api{eip_esp_set_netif}{void eip_esp_set_netif(esp_netif_t *const *netifs, uint8_t count);}
+ESP-IDF only (\file{ports/esp-idf/eip_esp_idf.h}). Selects the esp\_netif
+handles that the library sees, in order. Index 0 is the one that the adapter
+reports. Call it before \code{eip_adapter_start}. Without it, the port uses
+\code{ETH_DEF}, \code{WIFI_STA_DEF}, and \code{WIFI_AP_DEF}, if they exist.
+The function copies up to four handles and ignores the others. The netifs
+must stay valid while the adapter runs. A count of 0 sets the default lookup
+again.
+
+\api{eip_clearcore_set_host_name}{void eip_clearcore_set_host_name(const char *name);}
+ClearCore only (\file{ports/clearcore/eip_clearcore.h}). Sets the host name
+in TCP/IP Interface attribute 6, up to 64 characters. The function copies the
+string and cuts a longer name to 64 characters. Call it at start-up with the
+stored name. Call it again from \code{apply_interface} when a scanner sets
+attribute 6. The adapter reads this name again at each interface refresh, so
+a value that you do not store here goes back to the old value.
+
+% =========================================================================
+\section{Port Contract (\file{eip_hal.h})}
+
+A port implements these 19 functions. Chapter~\ref{ch:porting} gives the
+full rules.
+
+\api{eip_hal_millis}{uint32_t eip_hal_millis(void);}
+Free-running millisecond counter. Wraps at $2^{32}$.
+
+\api{eip_hal_clock_resolution_ms}{uint32_t eip_hal_clock_resolution_ms(void);}
+The step of \code{eip_hal_millis} in milliseconds: 1 on most ports, 50 on a
+20~Hz NetBurner tick.
+
+\api{eip_hal_yield}{void eip_hal_yield(void);}
+Lets other work run: one tick of sleep on an RTOS, the network stack poll on
+bare metal.
+
+\api{eip_hal_lock}{void eip_hal_lock(void);}
+Takes the adapter lock. Not nested. Empty on single-threaded ports.
+
+\api{eip_hal_unlock}{void eip_hal_unlock(void);}
+Releases the adapter lock.
+
+\api{eip_hal_netif_get}{int eip_hal_netif_get(uint8_t index, EipNetifInfo *info);}
+Fills in the data of interface \code{index}. \code{EIP_ERR_ARG} if there is no
+such interface.
+
+\api{eip_hal_tcp_connect}{eip_sock_t eip_hal_tcp_connect(const uint8_t ip[4], uint16_t port, uint32_t timeout_ms);}
+Connects. \code{EIP_SOCK_INVALID} on failure.
+
+\api{eip_hal_tcp_listen}{eip_sock_t eip_hal_tcp_listen(uint16_t port, uint8_t backlog);}
+Listens on all interfaces. \code{EIP_SOCK_INVALID} on failure.
+
+\api{eip_hal_tcp_accept}{eip_sock_t eip_hal_tcp_accept(eip_sock_t listener, uint8_t peer_ip[4]);}
+Never blocks. A connected socket, or \code{EIP_SOCK_INVALID}.
+
+\api{eip_hal_tcp_send}{int eip_hal_tcp_send(eip_sock_t sock, const uint8_t *data, uint16_t len);}
+Queues all \code{len} bytes, or returns \code{EIP_ERR_IO}.
+
+\api{eip_hal_tcp_recv}{int eip_hal_tcp_recv(eip_sock_t sock, uint8_t *buf, uint16_t cap, uint32_t timeout_ms);}
+Byte count ($>0$), 0 on timeout, or \code{EIP_ERR_IO}.
+
+\api{eip_hal_tcp_local_ip}{int eip_hal_tcp_local_ip(eip_sock_t sock, uint8_t ip[4]);}
+The local address of the connection.
+
+\api{eip_hal_tcp_close}{void eip_hal_tcp_close(eip_sock_t sock);}
+Closes a connected or listening socket.
+
+\api{eip_hal_udp_open}{eip_sock_t eip_hal_udp_open(uint16_t local_port, uint8_t flags);}
+Binds a UDP socket. Fails if the port is in use. Flags:
+\code{EIP_UDP_BROADCAST}, \code{EIP_UDP_MULTICAST_TX}.
+
+\api{eip_hal_udp_sendto}{int eip_hal_udp_sendto(eip_sock_t sock, const uint8_t ip[4], uint16_t port, const uint8_t *data, uint16_t len);}
+Sends one datagram.
+
+\api{eip_hal_udp_recvfrom}{int eip_hal_udp_recvfrom(eip_sock_t sock, uint8_t *buf, uint16_t cap, uint8_t ip[4], uint16_t *port, uint32_t timeout_ms);}
+Length ($>0$), 0 on timeout, or \code{EIP_ERR_IO}. Truncates to \code{cap}.
+
+\api{eip_hal_udp_close}{void eip_hal_udp_close(eip_sock_t sock);}
+Closes a UDP socket.
+
+\api{eip_hal_wait}{int eip_hal_wait(const eip_sock_t *socks, uint8_t count, uint32_t timeout_ms);}
+Waits until a socket can be ready, or until the timeout. $>0$ or 0.
+
+\api{eip_hal_adapter_start_task}{int eip_hal_adapter_start_task(struct EipServer *server);}
+Starts the adapter task (RTOS), or does nothing (poll mode).
+
+% =========================================================================
+\section{Sans-I/O Core (\file{eip_adapter.h})}
+
+Use these functions only for an event loop of your own. The core keeps one
+shared reply buffer, so serialize all calls on all \code{EipAdapter} objects.
+Table~\ref{tab:coreapi} summarizes them.
+
+\begin{longtable}{@{}P{0.40\linewidth}P{0.55\linewidth}@{}}
+\caption{Sans-I/O core functions}\label{tab:coreapi}\\
+\toprule
+\textbf{Function} & \textbf{Purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Function} & \textbf{Purpose} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{eip_adapter_init} & Initialize the core with an IP address and a serial number. \\
+\code{eip_adapter_set_ip} & Change the reported IP address. \\
+\code{eip_adapter_set_clock} & Set the ticks per second of the tick count that you supply. \\
+\code{eip_adapter_set_identity} & Set the Identity object values. The name is cut to 31 characters. \\
+\code{eip_adapter_clear_assemblies} & Remove the test assemblies. Call it before a connection opens. \\
+\code{eip_adapter_add_assembly} & Add one assembly from the data pool. \\
+\code{eip_adapter_set_implicit_only} & Hide an assembly from explicit messages. \\
+\code{eip_adapter_set_netmask} & Set the mask for the multicast address. \\
+\code{eip_adapter_set_timeout_floor_ms} & Set the minimum inactivity timeout. 0 removes the floor. \\
+\code{eip_adapter_set_interface} & Set the TCP/IP Interface values: MAC, gateway, configuration control, and host name. \\
+\code{eip_adapter_set_callbacks} & Enable settable attributes 3, 5, and 6 and the Identity Reset service. \\
+\code{eip_adapter_set_dns} & Set the DNS servers and domain in attribute 5. \\
+\code{eip_adapter_set_link} & Set the Ethernet Link object values. \\
+\code{eip_adapter_multicast_address} & Calculate the multicast group address. \\
+\code{eip_adapter_on_encap} & Process one encapsulation packet and build the reply. \\
+\code{eip_adapter_take_input_from} & Process one Class~1 \OT{} packet, with a check of the source address. \\
+\code{eip_adapter_take_input} & The same, without the source check. \\
+\code{eip_adapter_io_due} & Tell if a \TO{} packet is due. \\
+\code{eip_adapter_build_output} & Build the next \TO{} packet and its destination. \\
+\code{eip_adapter_check_timeout} & Run the inactivity watchdog. \\
+\code{eip_adapter_copy} & Copy the data of an assembly. \\
+\code{eip_adapter_store} & Replace the data of an assembly. \\
+\end{longtable}

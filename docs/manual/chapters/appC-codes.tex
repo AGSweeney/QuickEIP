@@ -1,0 +1,121 @@
+\chapter{Codes and Constants}\label{app:codes}
+
+\section{Return Codes}
+
+\begin{table}[htbp]
+\centering
+\caption{QuickEIP return codes}\label{tab:retcodes}
+\begin{tabularx}{\linewidth}{@{}P{0.27\linewidth}P{0.08\linewidth}L@{}}
+\toprule
+\textbf{Code} & \textbf{Value} & \textbf{Meaning} \\
+\midrule
+\code{EIP_OK} & 0 & Success. \\
+\code{EIP_ERR_ARG} & $-1$ & Bad argument. \\
+\code{EIP_ERR_CONNECT} & $-2$ & TCP connect failed. \\
+\code{EIP_ERR_IO} & $-3$ & A socket failed or the peer closed. \\
+\code{EIP_ERR_TIMEOUT} & $-4$ & No reply in the timeout. \\
+\code{EIP_ERR_PROTOCOL} & $-5$ & Malformed or unexpected reply, or an encapsulation status that is not 0. \\
+\code{EIP_ERR_CIP} & $-6$ & The device answered with an error. See \code{eip_last_cip_status}. \\
+\code{EIP_ERR_TOO_BIG} & $-7$ & Does not fit the buffer of the caller or a protocol limit. \\
+\code{EIP_ERR_PATH} & $-8$ & Bad tag or path text, or no such assembly instance. \\
+\code{EIP_ERR_STATE} & $-9$ & Wrong state: session not open, or adapter not started or started two times. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{CIP Status Codes}
+
+Table~\ref{tab:cipstatus} lists the CIP status codes that this manual refers
+to. The ODVA specifications give the complete list.\footnote{ODVA,
+\textit{The CIP Networks Library}, vol.~1, \textit{Common Industrial
+Protocol}, app.~B, Status Codes.}
+
+\begin{table}[htbp]
+\centering
+\caption{CIP status codes used in this manual}\label{tab:cipstatus}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.26\linewidth}L@{}}
+\toprule
+\textbf{General / extended} & \textbf{Meaning in QuickEIP} \\
+\midrule
+\hex{01} / \hex{0106} & Another originator owns the connection. \\
+\hex{01} / \hex{0113} & Another originator owns the connection (request without \OT). \\
+\hex{01} / \hex{0114}--\hex{0116} & The electronic key does not agree. \\
+\hex{01} / \hex{0126} & Config data size does not agree with the config assembly. \\
+\hex{01} / \hex{0127} & \OT{} size is wrong. \\
+\hex{01} / \hex{0128} & \TO{} size is wrong. \\
+\hex{01} / \hex{0129} & Config instance does not exist. \\
+\hex{01} / \hex{012A} & Consumed instance does not exist. \\
+\hex{01} / \hex{012B} & Produced instance does not exist. \\
+\hex{01} / \hex{0204} & Routed request: the slot did not answer in time. \\
+\hex{04} & Path segment error: malformed path. \\
+\hex{05} & Path destination unknown: tag or object not found. \\
+\hex{06} & Partial transfer. \code{eip_cip} returns \code{EIP_OK}. \\
+\hex{10} & Device state conflict. Usual value from \code{allow_change}. \\
+\hex{16} & Object does not exist, for example an unknown or implicit-only assembly. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{CIP Data Types}
+
+\begin{table}[htbp]
+\centering
+\caption{CIP elementary data types}\label{tab:ciptypes}
+\begin{tabular}{@{}lllr@{}}
+\toprule
+\textbf{Constant} & \textbf{Code} & \textbf{Type} & \textbf{Bytes} \\
+\midrule
+\code{EIP_BOOL}  & \hex{00C1} & Boolean & 1 \\
+\code{EIP_SINT}  & \hex{00C2} & Signed 8-bit & 1 \\
+\code{EIP_INT}   & \hex{00C3} & Signed 16-bit & 2 \\
+\code{EIP_DINT}  & \hex{00C4} & Signed 32-bit & 4 \\
+\code{EIP_LINT}  & \hex{00C5} & Signed 64-bit & 8 \\
+\code{EIP_USINT} & \hex{00C6} & Unsigned 8-bit & 1 \\
+\code{EIP_UINT}  & \hex{00C7} & Unsigned 16-bit & 2 \\
+\code{EIP_UDINT} & \hex{00C8} & Unsigned 32-bit & 4 \\
+\code{EIP_ULINT} & \hex{00C9} & Unsigned 64-bit & 8 \\
+\code{EIP_REAL}  & \hex{00CA} & IEEE 754 single & 4 \\
+\code{EIP_LREAL} & \hex{00CB} & IEEE 754 double & 8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Ports and Other Constants}
+
+\begin{table}[htbp]
+\centering
+\caption{Network ports and constants}\label{tab:ports}
+\begin{tabularx}{\linewidth}{@{}P{0.30\linewidth}P{0.14\linewidth}L@{}}
+\toprule
+\textbf{Constant} & \textbf{Value} & \textbf{Use} \\
+\midrule
+\code{EIP_TCP_PORT} & 44818 & Encapsulation (TCP and UDP). \\
+\code{EIP_UDP_PORT} & 2222 & Class~1 I/O on the adapter. \\
+\code{EIP_SCAN_PORT} & 44819 & Local UDP port of the broadcast scan. \\
+--- & 2223--2231 & Local UDP ports of a scanner Class~1 connection. \\
+\code{EIP_SOCK_INVALID} & $-1$ & No socket. \\
+\code{EIP_KIND_ASSEMBLY} & 0 & Generic EtherNet/IP device. \\
+\code{EIP_KIND_COMPACTLOGIX} & 1 & Rockwell 1768, 1769, 5069, or a CompactLogix name. \\
+\code{EIP_KIND_MICRO800} & 2 & Rockwell Micro800. \\
+\code{EIP_CHANGE_INTERFACE} & 1 & \code{allow_change}: a TCP/IP Interface Set. \\
+\code{EIP_CHANGE_RESET} & 2 & \code{allow_change}: an Identity Reset. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Identity Status Word of the Adapter}
+
+\begin{table}[htbp]
+\centering
+\caption{Identity status of the adapter}\label{tab:idstatus}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Value} & \textbf{State} \\
+\midrule
+\hex{0034} & Configured, no Class~1 connection \\
+\hex{0065} & Class~1 connection in run \\
+\hex{0075} & Class~1 connection in idle \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,240 @@
+\chapter{Porting to a New Platform}\label{ch:porting}
+
+A port is one source file, sometimes two, that implements the functions in
+\file{include/eip_hal.h}. The core calls these functions directly. There is
+no function table. This chapter tells you what each function must do and how
+to check a new port.
+
+\section{Select a Starting Point}
+
+Start from the port that is nearest to your platform.
+Table~\ref{tab:portstart} shows which port to use.
+
+\begin{table}[htbp]
+\centering
+\caption{Starting points for a new port}\label{tab:portstart}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.32\linewidth}P{0.30\linewidth}L@{}}
+\toprule
+\textbf{Your platform has} & \textbf{Start from} & \textbf{You write} \\
+\midrule
+BSD sockets (\code{socket}, \code{select}, \code{fcntl}): lwIP with \code{LWIP_SOCKET}, Zephyr, Linux, FreeRTOS+TCP with its BSD layer & \file{ports/bsd_sockets/eip_hal_bsd_sockets.c}, without changes & A platform file like \file{ports/esp-idf/eip_hal_esp_idf.c}: clock, lock, interfaces, and task \\
+The lwIP raw API, \code{NO_SYS=1}, no socket layer: STM32Cube bare metal, SAM, other boards like ClearCore & \file{ports/lwip_raw/eip_hal_lwip_raw.c}, without changes & A platform file like \file{ports/clearcore/eip_hal_clearcore.cpp}: clock, yield (your stack poll), and interfaces \\
+A vendor socket API that is neither (NetBurner) & \file{ports/netburner/eip_hal_netburner.cpp} & The full contract \\
+Winsock & \file{ports/windows/eip_hal_windows.c}, without changes & Nothing \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The platform file is short. For ESP-IDF it is approximately 190 lines with
+comments, and for ClearCore approximately 130.
+
+\section{General Rules of the Contract}
+
+\begin{description}[font=\sffamily\bfseries\color{steel}]
+  \item[Handles.] A socket handle is an \code{int}. A negative value is not
+        valid, and \code{EIP_SOCK_INVALID} is $-1$. The core records which
+        handles it owns, so 0 is a valid handle.
+  \item[Addresses.] An IPv4 address is \code{uint8_t[4]} in network order,
+        for example \code{\{192,168,1,10\}}. A port number is a plain integer
+        in host order.
+  \item[Timeouts.] \code{timeout_ms == 0} means ``do not wait.'' Return what
+        is ready now.
+  \item[Blocking waits.] Each blocking wait must keep the network stack in
+        operation. On bare metal, call the stack poll inside the loop. This is
+        the purpose of \code{eip_hal_yield}.
+  \item[Return codes.] \code{EIP_OK} (0) or a negative \code{EIP_ERR_*},
+        unless the function gives a different rule.
+\end{description}
+
+\section{Time and Scheduling}
+
+\begin{table}[htbp]
+\centering
+\caption{Port functions: time, scheduling, and lock}\label{tab:halttime}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.34\linewidth}L@{}}
+\toprule
+\textbf{Function} & \textbf{Must} \\
+\midrule
+\code{eip_hal_millis} & Return a free-running millisecond counter that wraps at $2^{32}$. The core uses only differences. \TO{} packets are timed from it, so use a real 1~ms source if the platform has one. \\
+\code{eip_hal_clock_resolution_ms} & Return the real step of the counter in milliseconds (1 for a 1~kHz source). The adapter never sets a Class~1 timeout shorter than two steps. \\
+\code{eip_hal_yield} & Let other work run for a short time. On an RTOS, sleep one tick. On bare metal, run the poll of the network stack, for example \code{EthernetMgr.Refresh()}, or \code{sys_check_timeouts()} plus \code{ethernetif_input()}. \\
+\code{eip_hal_lock}, \code{eip_hal_unlock} & Give mutual exclusion between the adapter context and application tasks. The lock is not nested, is held for microseconds, and is never held during a socket call. The core can read \code{eip_hal_millis} while it holds the lock. Single-threaded ports leave the two functions empty. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{caution}
+Use a clock with a real 1~ms step if the platform has one. On Windows,
+\code{GetTickCount64} steps approximately each 16~ms. With that clock, the
+adapter sent \TO{} at approximately half the rate, and the connection timed
+out. \file{tests/test_hal.c} measures the step and fails a clock that is
+coarser than it reports.
+\end{caution}
+
+\section{Network Interfaces}
+
+\code{eip_hal_netif_get(index, info)} fills in the data of interface
+\code{index}. Index 0 is the primary interface. These rules apply:
+
+\begin{itemize}
+  \item Return \code{EIP_ERR_ARG} after the last interface.
+  \item An interface without an address still returns \code{EIP_OK}, with
+        \code{ip} = 0.0.0.0. The POSIX port is an exception. It lists only
+        interfaces that are up and have an IPv4 address.
+  \item Set to zero all fields that you do not know.
+  \item Set \code{link_known = 1} when you can report \code{link_up}. If you
+        do not, the server uses ``has an address'' as ``link up, 100~Mbit/s
+        full duplex.'' Fill \code{speed_mbps}, \code{full_duplex}, and
+        \code{autonegotiated} with real values if you can.
+\end{itemize}
+
+The core uses the result in three ways:
+
+\begin{enumerate}
+  \item The adapter calls the function each 100~ms for \code{netif_index}. It
+        fills in its Identity, TCP/IP Interface, and Ethernet Link objects.
+  \item The scan reads indexes 0, 1, 2, and so on, to find broadcast addresses.
+  \item The MAC address sets the default serial number.
+\end{enumerate}
+
+\section{TCP}
+
+\begin{table}[htbp]
+\centering
+\caption{Port functions: TCP}\label{tab:haltcp}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.30\linewidth}L@{}}
+\toprule
+\textbf{Function} & \textbf{Must} \\
+\midrule
+\code{eip_hal_tcp_connect} & Connect, and wait up to \code{timeout_ms}. Return a handle or \code{EIP_SOCK_INVALID}. \\
+\code{eip_hal_tcp_listen} & Listen on all addresses. Return a handle or \code{EIP_SOCK_INVALID}. \\
+\code{eip_hal_tcp_accept} & \textbf{Never block.} Return a connected handle and fill \code{peer_ip}, or return \code{EIP_SOCK_INVALID} when no client waits. \\
+\code{eip_hal_tcp_send} & Queue \textbf{all} \code{len} bytes. Return \code{EIP_ERR_IO} if the connection is broken, or if the bytes cannot be queued in a few hundred milliseconds. Do not block for an unlimited time. \\
+\code{eip_hal_tcp_recv} & Return the number of bytes read ($>0$), 0 if nothing arrived in time, or \code{EIP_ERR_IO} after the peer closed or the connection failed. With \code{timeout_ms == 0}, return immediately. \\
+\code{eip_hal_tcp_local_ip} & Return the local address of the connection. It goes into the \TO{} socket address of a Forward\_Open. \\
+\code{eip_hal_tcp_close} & Close the socket and release the handle. This applies to connected and listening sockets. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For adapter sessions, set TCP\_NODELAY and keep-alive (approximately 30~s
+idle, three probes). Table~\ref{tab:tcpopts} shows what the shipped ports do.
+
+\begin{table}[htbp]
+\centering
+\caption{TCP options in the shipped socket layers}\label{tab:tcpopts}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.18\linewidth}P{0.22\linewidth}L@{}}
+\toprule
+\textbf{Layer} & \textbf{TCP\_NODELAY} & \textbf{Keep-alive} \\
+\midrule
+\file{bsd_sockets} & All connections & Accepted sockets only. The 30~s setting needs \code{TCP_KEEPIDLE}, \code{TCP_KEEPINTVL}, and \code{TCP_KEEPCNT}. \\
+\file{lwip_raw} & All connections & Only in lwIP builds with \code{LWIP_TCP_KEEPALIVE}. \\
+\file{netburner} & No & No. The slot of a lost peer comes back through eviction. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{UDP}
+
+\begin{table}[htbp]
+\centering
+\caption{Port functions: UDP}\label{tab:haludp}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.30\linewidth}L@{}}
+\toprule
+\textbf{Function} & \textbf{Must} \\
+\midrule
+\code{eip_hal_udp_open} & Bind on all addresses. \code{local_port == 0} means any free port. \textbf{Fail if the port is already in use.} \code{EIP_UDP_BROADCAST} permits broadcast sends. \code{EIP_UDP_MULTICAST_TX} permits multicast sends with TTL 1 on the primary interface, where the stack can set them. \\
+\code{eip_hal_udp_sendto} & Send one datagram. Return \code{EIP_OK} or \code{EIP_ERR_IO}. \\
+\code{eip_hal_udp_recvfrom} & Receive one datagram. Return its length, 0 if nothing arrived in time, or \code{EIP_ERR_IO}. Cut a long datagram to \code{cap}. \code{ip} and \code{port} can be null. \\
+\code{eip_hal_udp_close} & Close the socket and release the handle. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{caution}
+Do not use \code{SO_REUSEADDR}. The scanner finds a free port in UDP
+2223--2231 because a bind to a port in use fails. The same failure stops an
+explicit \code{local_port} of 2222 while an adapter runs on the same device.
+\end{caution}
+
+A socket bound to the any-address must receive broadcasts. The adapter
+answers broadcast ListIdentity requests on UDP 44818.
+
+\section{Wait and the Adapter Runner}
+
+\begin{table}[htbp]
+\centering
+\caption{Port functions: wait and runner}\label{tab:halrun}
+\small
+\begin{tabularx}{\linewidth}{@{}P{0.30\linewidth}L@{}}
+\toprule
+\textbf{Function} & \textbf{Must} \\
+\midrule
+\code{eip_hal_wait} & Wait until one of the handles can be readable (or a listener has a connection), or until the timeout. Skip handles that are not valid. The function can return early. Without \code{select()}, a loop of \code{eip_hal_yield} and readiness checks is correct. \\
+\code{eip_hal_adapter_start_task} & Called one time by \code{eip_adapter_start}. \textbf{RTOS:} make a task that runs \code{for (;;) eip_server_service(server, EIP_ADAPTER_IDLE_WAIT_MS);}. Give it a stack of 4--6~KB. \textbf{Bare metal:} do nothing and return \code{EIP_OK}. The application then calls \code{eip_adapter_poll}. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The server itself is static. \code{eip_server_service} needs approximately
+1~KB of stack, plus the call depth of the socket layer of your platform.
+
+\section{Check a New Port}\label{sec:checkport}
+
+Do these checks before you connect a PLC.
+
+\begin{procedure}{Check a new port}
+\begin{enumerate}
+  \item Compile with warnings on (\code{-Wall -Wextra}). The core compiles
+        without warnings on the compilers of the shipped ports.
+  \item If your platform can run it, run \file{tests/test_hal.c}. Make sure
+        that all checks pass.
+  \item On the target, start the test adapter with
+        \code{eip_adapter_start(0)}.
+  \item On a PC on the same network, build the POSIX version of
+        \code{eiptool} (section~\ref{sec:hostbuild}).
+  \item Run the commands in the listing below. Make sure that each result is
+        correct.
+  \item Test Class~1 from the PC. Use \code{eip_io_open} with config 150,
+        output 100, input 101, and 8 bytes in each direction, as in
+        \file{tests/test_loopback.c}.
+  \item Let the connection run for some minutes. On the target, monitor
+        \code{rx_packets}, \code{timeouts}, and the \code{rx_dropped_*}
+        counters in the snapshot.
+  \item On the PC, run \code{eiptool adapter}.
+  \item From the target, call \code{eip_list_identity},
+        \code{eip_session_open}, \code{eip_get_attribute}, and
+        \code{eip_io_open} against the PC.
+  \item Test with a real PLC and an EDS file that agrees with your
+        assemblies.
+\end{enumerate}
+\end{procedure}
+
+\begin{lstlisting}[language=shell]
+./build/eiptool scan                     # finds "EIP Test Adapter"
+./build/eiptool identity <target-ip>
+./build/eiptool get <target-ip> 1 1 7    # Identity product name
+./build/eiptool get <target-ip> 4 101 3  # produced data: 11 22 33 44 55 66 77 88
+./build/eiptool get <target-ip> 0xF5 1 5 # TCP/IP interface configuration
+\end{lstlisting}
+
+If a check fails, compare your port with the POSIX port. It is the
+reference, and \code{test_loopback} runs all paths through it.
+
+\section{Rules for Changes to the Core}
+
+If you change the core itself, obey these rules:
+
+\begin{itemize}
+  \item Keep \file{src/} free of OS calls. All OS access goes through
+        \file{eip_hal.h}.
+  \item Add a test with each change of behavior: \file{tests/test_core.c}
+        for the codec and the adapter core, \file{tests/test_session.c} for
+        scanner sessions, and \file{tests/test_hal.c} for the port contract.
+  \item Use \code{/* */} comments in ASCII. Tell why, not what.
+\end{itemize}
