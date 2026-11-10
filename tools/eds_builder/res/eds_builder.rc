@@ -1,0 +1,2 @@
+/* The first icon in the executable is the one Explorer and the taskbar show. */
+IDI_ICON1 ICON "eds_builder.ico"
