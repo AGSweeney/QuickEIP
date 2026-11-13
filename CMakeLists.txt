@@ -96,6 +96,10 @@ if(QUICKEIP_HOST_PORT)
         target_link_libraries(test_loopback PRIVATE quickeip)
         add_test(NAME loopback COMMAND test_loopback)
         set_tests_properties(loopback PROPERTIES TIMEOUT 60)
+
+        # Not a ctest test: it needs a device that runs a firmware from tests/hardware.
+        add_executable(hw_test tests/hardware/hw_test.c)
+        target_link_libraries(hw_test PRIVATE quickeip)
     endif()
 
     if(QUICKEIP_BUILD_TOOLS)
