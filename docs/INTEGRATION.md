@@ -210,6 +210,9 @@ The table lists the callbacks in `EipAdapterConfig`.
 | `apply_interface` | Approximately 150 ms after a scanner sets TCP/IP Interface attribute 3, 5, or 6. The adapter sent the reply before the call. | Store and apply the new IP settings. If the field is 0, those attributes are read-only. |
 | `reset` | Approximately 300 ms after an Identity Reset request | Restart (type 0), or go back to the factory settings and restart (type 1). If the field is 0, the adapter refuses the service. |
 | `allow_change` | Before the adapter accepts a TCP/IP Interface Set or an Identity Reset, while it prepares the reply | Refuse the change, for example while machinery moves. Return a CIP general status (`0x10`, device state conflict), and the requester gets that error. A refused request does not go to `apply_interface` or `reset`. Return 0 to permit the change. |
+| `on_event` | When the Class 1 connection opens, closes, or times out, and when it changes between run and idle | Start or stop your machine logic without a poll of `eip_adapter_snapshot`. |
+| `on_leds` | One time after the start, and then when an indicator state changes | Set the module status and network status indicators of your device. |
+| `store_nv` | After a scanner changes a stored setting | Write the `EipNvSettings` structure to non-volatile memory. If the field is 0, the stored settings are read-only. |
 
 These rules apply to the callbacks:
 
@@ -217,6 +220,87 @@ These rules apply to the callbacks:
 - The first argument of each callback is `callback_ctx`.
 - `allow_change` runs while the adapter holds `eip_hal_lock`. Keep it short,
   and do not call `eip_adapter_*` from it.
+- `on_event`, `on_leds`, and `store_nv` run with no lock. They can call
+  `eip_adapter_read` and `eip_adapter_write`. The adapter sends no T→O packet
+  until the callback returns, so keep each callback short.
+
+**Events.** The adapter reports an event in the same pass in which it finds
+the change. The table lists the events.
+
+| Event | Meaning |
+|---|---|
+| `EIP_EVENT_IO_OPENED` | A Class 1 connection opened. |
+| `EIP_EVENT_IO_CLOSED` | The originator closed the connection, or opened it again. |
+| `EIP_EVENT_IO_TIMEOUT` | The inactivity watchdog closed the connection. |
+| `EIP_EVENT_RUN` | The connection changed to run. |
+| `EIP_EVENT_IDLE` | The connection changed to idle. The consumed assembly reads as all zeros. |
+
+A connection with a run/idle header opens in idle. `EIP_EVENT_RUN` follows
+when the first packet says run. A connection with no header opens in run, and
+`EIP_EVENT_RUN` follows `EIP_EVENT_IO_OPENED` immediately. The adapter does
+not send `EIP_EVENT_IDLE` after a close or a timeout.
+
+> **WARNING:** Do not use an event as the only signal that stops machinery.
+> Two changes of the same type in one pass give one event. Read the consumed
+> assembly in each cycle of your machine logic.
+
+**Indicators.** `on_leds` gives the state of the two indicators as
+`EIP_LED_OFF`, `EIP_LED_GREEN`, `EIP_LED_GREEN_FLASH`, `EIP_LED_RED`, or
+`EIP_LED_RED_FLASH`. Your application drives the hardware. A flash is 500 ms
+on and 500 ms off. `EipAdapterView` contains the same two states.
+
+| Indicator | State | Condition |
+|---|---|---|
+| Network status | Off | The interface has no IP address. |
+| Network status | Flashing green | No connection is open. |
+| Network status | Green | A connection is open. |
+| Network status | Flashing red | A connection timed out. The state stays until a connection opens again. |
+| Module status | Green | The adapter runs. |
+
+The adapter does not know the faults of your device. Thus, it does not set
+the module status to red or to flashing green. Your application sets those
+states.
+
+**Stored settings.** A scanner can set the values in the table. The
+application must keep them through a restart.
+
+| Setting | CIP attribute | Default | Applies |
+|---|---|---|---|
+| `encap_timeout_s` | TCP/IP Interface (`0xF5`), attribute 13 | 120 | Immediately |
+| `dscp_urgent`, `dscp_scheduled`, `dscp_high`, `dscp_low` | QoS (`0x48`), attributes 4–7 | 55, 47, 43, 31 | At the next start |
+| `dscp_explicit` | QoS (`0x48`), attribute 8 | 27 | At the next start |
+
+**Procedure: Keep the stored settings through a restart**
+
+1. Set `store_nv` in `EipAdapterConfig`.
+2. In the callback, write the full `EipNvSettings` structure to non-volatile
+   memory.
+3. At the start, read the structure from non-volatile memory.
+4. Set `nv` in `EipAdapterConfig` to point to the structure.
+5. Call `eip_adapter_start`.
+
+If the memory has no stored structure, set `nv` to 0. The adapter then uses
+the defaults. If a stored value is out of range, the adapter uses the default
+for that value.
+
+`encap_timeout_s` is the encapsulation inactivity timeout. The adapter closes
+a TCP connection that receives no data for this number of seconds. A value of
+0 stops this function. The adapter does not close the TCP connection of the
+originator while its Class 1 connection is open.
+
+The DSCP values mark the packets that the adapter sends. A T→O packet gets
+the value for the priority in the Forward_Open. Explicit messages get
+`dscp_explicit`. The QoS object is available only on a port that can mark
+packets. `EipAdapterView.qos` is 1 on such a port. The table gives the
+status of each port.
+
+| Port | QoS object |
+|---|---|
+| POSIX | Yes. Tested with Linux: the DSCP value arrives in the received packet. |
+| ESP-IDF | Yes. Tested with an ESP32-S31: a packet capture shows the stored values on UDP port 2222, UDP port 44818, and TCP port 44818. The SYN-ACK packet of each TCP connection has the value 0, because lwIP sends it before the adapter gets the socket. |
+| ClearCore | Yes. The port file builds. Not yet tested on hardware. |
+| NetBurner | No. The port sends with the socket functions of NNDK, and they have no DSCP setting. |
+| Windows | No. Windows does not mark packets from a socket option. |
 
 ### 3.5 More control: the EipServer API
 
@@ -509,8 +593,13 @@ The table gives the memory use with the default settings.
 
 ## 6. NetBurner NNDK
 
-The port builds with NNDK 3.5.8 (ARM platforms). It is not yet tested on
-hardware. The NNDK 3.x socket API is the same on all platforms.
+The port builds with NNDK 3.5.8 (ARM platforms). The adapter is tested with
+a MODRT1171 and the QuickEIP scanner on a PC. The test included explicit
+messages, Class 1 at an RPI of 50 ms, and the inactivity timeout. It also
+included the event and indicator callbacks, the stored settings, and Identity
+Reset. The adapter is
+not yet tested with a PLC. The scanner is not yet tested on hardware. The
+NNDK 3.x socket API is the same on all platforms.
 
 The NNDK rules put each object at `obj/release/<source path>`. A source path
 that starts with `../` puts the objects outside `obj/`, adjacent to your
@@ -622,8 +711,15 @@ directories to the C compiler settings and to the C++ compiler settings.
 
 ## 7. ESP-IDF (ESP32)
 
-The port builds with ESP-IDF 5.5.1 on the esp32 target. It is not yet tested
-on hardware, and not yet tested with other ESP-IDF 5.x versions.
+The port builds with ESP-IDF 5.5.1 on the esp32 target. That target is not
+yet tested on hardware. The adapter is tested with an ESP32-S31 (Ethernet,
+YT8531 PHY), ESP-IDF 6.1, and the QuickEIP scanner on a PC. The test included
+explicit messages, Class 1 at an RPI of 10 ms, and the inactivity timeout. It
+also included the event and indicator callbacks, the stored settings, and
+Identity Reset. A packet capture showed the DSCP values in the transmitted
+packets. The adapter is not yet tested with a
+PLC. The scanner is not yet tested on hardware. Other ESP-IDF versions are
+not yet tested.
 
 The QuickEIP root directory is an IDF component. The component takes the name
 of its directory. Use the same spelling in all places.

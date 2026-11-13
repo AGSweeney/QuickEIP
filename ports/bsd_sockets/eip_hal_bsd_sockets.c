@@ -386,6 +386,19 @@ void eip_hal_udp_close(eip_sock_t sock)
     }
 }
 
+/* ---- QoS ---------------------------------------------------------------- */
+
+/* DSCP is the top six bits of the TOS byte; the two ECN bits stay 0. */
+int eip_hal_set_dscp(eip_sock_t sock, uint8_t dscp)
+{
+    int tos = (int)(dscp & 0x3Fu) << 2;
+
+    if (sock < 0) {
+        return EIP_ERR_ARG;
+    }
+    return (setsockopt(sock, IPPROTO_IP, IP_TOS, &tos, sizeof tos) == 0) ? EIP_OK : EIP_ERR_STATE;
+}
+
 /* ---- waiting ------------------------------------------------------------ */
 
 /* A select() error, EINTR included, reads as a timeout: the contract allows an

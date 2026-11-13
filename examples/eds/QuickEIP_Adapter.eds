@@ -113,7 +113,7 @@ $ VendCode 65000 is a placeholder, not an assigned ODVA vendor id.
         TSpec2 = Tx, 32, 100;
 
 [TCP/IP Interface Class]
-        Revision = 3;
+        Revision = 4;
         Object_Name = "TCP/IP Interface Object";
         Object_Class_Code = 0xF5;
         MaxInst = 1;

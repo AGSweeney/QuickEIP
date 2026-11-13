@@ -1688,8 +1688,127 @@ static void TestIoPacketLengthOverflow(void)
            "I/O packet length does not wrap");
 }
 
+/* Stored settings: TCP/IP Interface attr 13 and the QoS object (0x48). Pins the defaults, the range
+ * checks, that a Set needs a caller who can store, that the QoS object is absent until the caller
+ * says packets are marked, and the T->O priority a Forward_Open leaves for the caller's DSCP choice. */
+static void TestStoredSettings(void)
+{
+    static EipAdapter adapter;
+    const uint8_t ip[4] = {172, 16, 82, 148};
+    uint8_t response[700];
+    uint16_t response_len = 0;
+    uint32_t session = 0;
+    uint8_t body[4];
+    uint8_t status = 0xFF;
+    const uint8_t *data = 0;
+    uint16_t data_len = 0;
+    uint8_t reg[4] = {0x01, 0x00, 0x00, 0x00};
+    EipNvSettings nv;
+    uint16_t attribute;
+    int rc;
+    static const uint8_t defaults[5] = {55, 47, 43, 31, 27};
+
+    eip_adapter_init(&adapter, ip, 1);
+    eip_adapter_set_clock(&adapter, 1000);
+    eip_adapter_clear_assemblies(&adapter);
+    eip_adapter_add_assembly(&adapter, 110, EIP_ASM_CONSUMED, 4, "Out", 0);
+    eip_adapter_add_assembly(&adapter, 101, EIP_ASM_PRODUCED, 4, "In", 0);
+    RoundTrip(&adapter, &session, EIP_CMD_REGISTER, reg, 4, response, &response_len);
+
+    /* TCP/IP class revision 4, and attr 13 with its default. */
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0xF5, 0, 1, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && data_len == 2 && eip_load_le16(data) == 4, "nv: tcp/ip class rev 4");
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0xF6, 0, 1, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && data_len == 2 && eip_load_le16(data) == 3, "nv: ethernet link class rev 3");
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0xF5, 1, 13, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && data_len == 2 && eip_load_le16(data) == 120, "nv: attr 13 default 120");
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0xF5, 1, 14, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x14, "nv: attr 14 does not exist");
+
+    /* Nobody to store: read-only. */
+    eip_store_le16(body, 30);
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 13, body, 2, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x0E && adapter.nv_dirty == 0, "nv: attr 13 not settable without a store");
+
+    /* The QoS object is absent until the caller says the port marks packets. */
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0x48, 1, 4, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x16, "nv: no QoS object before qos_present");
+    eip_adapter_set_qos_present(&adapter, 1);
+    for (attribute = 4; attribute <= 8u; attribute++) {
+        rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0x48, 1, (int)attribute, 0, 0, &status, &data,
+                    &data_len, response);
+        Expect(rc == EIP_OK && status == 0 && data_len == 1 && data[0] == defaults[attribute - 4u],
+               "nv: QoS default DSCP");
+    }
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0x48, 1, 1, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x14, "nv: QoS attr 1 not implemented");
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0x48, 1, 9, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x14, "nv: QoS attr 9 does not exist");
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0x48, 2, 4, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x16, "nv: QoS instance 2 does not exist");
+    rc = CipRaw(&adapter, &session, 0x01, 0x48, 1, -1, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x08, "nv: QoS has no Get_Attributes_All");
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0x48, 0, 1, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && data_len == 2 && eip_load_le16(data) == 1, "nv: QoS class rev 1");
+    body[0] = 10;
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0x48, 1, 4, body, 1, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x0E, "nv: QoS not settable without a store");
+
+    /* With a store. Stored values out of range fall back to their defaults. */
+    eip_nv_defaults(&nv);
+    nv.encap_timeout_s = 4000;
+    nv.dscp_high = 64;
+    nv.dscp_low = 12;
+    eip_adapter_set_nv(&adapter, &nv, 1);
+    Expect(adapter.nv.encap_timeout_s == 120 && adapter.nv.dscp_high == 43 && adapter.nv.dscp_low == 12,
+           "nv: out-of-range stored values take defaults");
+
+    eip_store_le16(body, 3600);
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 13, body, 2, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && adapter.nv.encap_timeout_s == 3600 && adapter.nv_dirty == 1,
+           "nv: attr 13 set to the maximum");
+    adapter.nv_dirty = 0;
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 13, body, 2, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && adapter.nv_dirty == 0, "nv: an unchanged value is not stored again");
+    eip_store_le16(body, 3601);
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 13, body, 2, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x09 && adapter.nv.encap_timeout_s == 3600, "nv: attr 13 over 3600 refused");
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 13, body, 1, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x13, "nv: attr 13 short");
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 13, body, 3, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x15, "nv: attr 13 long");
+    eip_store_le16(body, 0);
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 13, body, 2, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && adapter.nv.encap_timeout_s == 0, "nv: attr 13 set to 0 (off)");
+    /* Attr 13 does not need, and does not unlock, the interface configuration. */
+    eip_store_le32(body, 0);
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0xF5, 1, 3, body, 4, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x0E, "nv: attr 3 still needs set_interface");
+
+    adapter.nv_dirty = 0;
+    body[0] = 63;
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0x48, 1, 8, body, 1, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && adapter.nv.dscp_explicit == 63 && adapter.nv_dirty == 1,
+           "nv: QoS explicit DSCP set");
+    rc = CipRaw(&adapter, &session, EIP_CIP_GET_ATTRIBUTE, 0x48, 1, 8, 0, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0 && data_len == 1 && data[0] == 63, "nv: QoS reads back the new value");
+    body[0] = 64;
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0x48, 1, 4, body, 1, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x09 && adapter.nv.dscp_urgent == 55, "nv: DSCP over 63 refused");
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0x48, 1, 4, body, 2, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x15, "nv: DSCP long");
+    rc = CipRaw(&adapter, &session, EIP_CIP_SET_ATTRIBUTE, 0x48, 1, 4, body, 0, &status, &data, &data_len, response);
+    Expect(rc == EIP_OK && status == 0x13, "nv: DSCP short");
+
+    /* RobotOpen sends priority bits 0 (low). */
+    adapter.t2o_priority = 9;
+    rc = RobotOpen(&adapter, &session, 2, 0x3001, 0x77, 1, response, &response_len);
+    Expect(rc == EIP_OK && adapter.io_open == 1 && adapter.t2o_priority == 0, "nv: open records T->O priority");
+}
+
 int main(void)
 {
+    TestStoredSettings();
     TestKeyMinorZeroIsWildcard();
     TestRefusalCarriesTriad();
     TestOpenReportsOwnIntervals();

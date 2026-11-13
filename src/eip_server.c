@@ -15,8 +15,8 @@
  * eip_hal_lock wraps calls into the core and is released before any socket
  * call.
  *
- * Sections: deferred application callbacks, interface values, sockets and
- * per-pass work, then the public API. eip_server_poll shows the pass order.
+ * Sections: deferred application callbacks, events and indicators, interface
+ * values, sockets and per-pass work, then the public API. eip_server_poll shows the pass order.
  */
 #include "eip_server.h"
 
@@ -111,6 +111,112 @@ static void RunDeferred(EipServer *server)
     }
 }
 
+/* ---- events, indicators and stored settings ----------------------------- */
+
+static uint8_t DscpForPriority(const EipNvSettings *nv, uint8_t priority)
+{
+    switch (priority) {
+    case 3: return nv->dscp_urgent;
+    case 2: return nv->dscp_scheduled;
+    case 1: return nv->dscp_high;
+    default: return nv->dscp_low;
+    }
+}
+
+static void Fire(EipServer *server, uint8_t event)
+{
+    if (server->config.on_event != 0) {
+        server->config.on_event(server->config.callback_ctx, event);
+    }
+}
+
+/* Compare the core with what the application was last told and report the
+ * differences. The core has no hooks: it runs under eip_hal_lock, where an
+ * application callback could not call eip_adapter_read. So the core is read
+ * under the lock here and the callbacks run after it is released.
+ *
+ * opens and timeouts are counters, so an open or a timeout is seen even when
+ * io_open reads the same as before (a reopen by the same originator closes
+ * and opens inside one request). Two changes of the same kind between two
+ * calls are reported as one; poll calls this before and after Produce, so
+ * that takes two within a few milliseconds.
+ *
+ * A new connection gets its DSCP value here, before Produce sends its first
+ * T->O packet. The values are those of the last start (boot_nv). */
+static void TrackState(EipServer *server)
+{
+    uint8_t io_open;
+    uint8_t run;
+    uint8_t priority;
+    uint8_t has_ip;
+    uint8_t module;
+    uint8_t network;
+    uint8_t dirty = 0;
+    uint32_t opens;
+    uint32_t timeouts;
+    EipNvSettings nv;
+
+    eip_hal_lock();
+    io_open = server->core.io_open;
+    run = (uint8_t)(server->core.io_open && server->core.run);
+    priority = server->core.t2o_priority;
+    opens = server->core.opens;
+    timeouts = server->core.timeouts;
+    has_ip = (uint8_t)!IpIsZero(server->core.ip);
+    if (server->core.nv_dirty) {
+        nv = server->core.nv;
+        server->core.nv_dirty = 0;
+        dirty = 1;
+    }
+    eip_hal_unlock();
+
+    if (opens != server->seen_opens) {
+        if (server->seen_io_open) {
+            Fire(server, (timeouts != server->seen_timeouts) ? EIP_EVENT_IO_TIMEOUT : EIP_EVENT_IO_CLOSED);
+        }
+        server->seen_opens = opens;
+        server->seen_io_open = 1;
+        server->seen_run = 0;
+        server->timed_out = 0;
+        if (server->qos && server->udp_io >= 0) {
+            (void)eip_hal_set_dscp(server->udp_io, DscpForPriority(&server->boot_nv, priority));
+        }
+        Fire(server, EIP_EVENT_IO_OPENED);
+    }
+    if (server->seen_io_open && !io_open) {
+        server->seen_io_open = 0;
+        server->seen_run = 0;
+        if (timeouts != server->seen_timeouts) {
+            server->timed_out = 1;
+            Fire(server, EIP_EVENT_IO_TIMEOUT);
+        } else {
+            Fire(server, EIP_EVENT_IO_CLOSED);
+        }
+    }
+    server->seen_timeouts = timeouts;
+    if (server->seen_io_open && run != server->seen_run) {
+        server->seen_run = run;
+        Fire(server, run ? EIP_EVENT_RUN : EIP_EVENT_IDLE);
+    }
+
+    module = EIP_LED_GREEN;
+    network = !has_ip ? EIP_LED_OFF
+                      : server->seen_io_open ? EIP_LED_GREEN
+                                             : server->timed_out ? EIP_LED_RED_FLASH : EIP_LED_GREEN_FLASH;
+    if (!server->leds_reported || module != server->module_led || network != server->network_led) {
+        server->leds_reported = 1;
+        server->module_led = module;
+        server->network_led = network;
+        if (server->config.on_leds != 0) {
+            server->config.on_leds(server->config.callback_ctx, module, network);
+        }
+    }
+
+    if (dirty && server->config.store_nv != 0) {
+        server->config.store_nv(server->config.callback_ctx, &nv);
+    }
+}
+
 /* ---- interface values --------------------------------------------------- */
 
 /* Copy the port's view of the interface into the core, every 100 ms from
@@ -184,17 +290,34 @@ static int AllOpen(const EipServer *server)
  * is not detected or reopened: receive errors just end that socket's drain. */
 static void OpenSockets(EipServer *server)
 {
+    uint8_t dscp = server->boot_nv.dscp_explicit;
+
+    /* The listener is the first socket marked, and its result says whether
+     * the port can mark at all: only then does the QoS object exist. The
+     * listener must be open before a scanner can ask for the object. The I/O
+     * socket starts with the explicit value and takes the value for the
+     * connection's priority when one opens. */
     if (server->tcp < 0) {
         server->tcp = eip_hal_tcp_listen(EIP_TCP_PORT, EIP_ADAPTER_MAX_CLIENTS);
+        if (server->tcp >= 0) {
+            server->qos = (eip_hal_set_dscp(server->tcp, dscp) == EIP_OK) ? 1u : 0u;
+        }
     }
     if (server->udp_id < 0) {
         server->udp_id = eip_hal_udp_open(EIP_TCP_PORT, EIP_UDP_BROADCAST);
+        if (server->udp_id >= 0) {
+            (void)eip_hal_set_dscp(server->udp_id, dscp);
+        }
     }
     if (server->udp_io < 0) {
         server->udp_io = eip_hal_udp_open(EIP_UDP_PORT, EIP_UDP_MULTICAST_TX);
+        if (server->udp_io >= 0) {
+            (void)eip_hal_set_dscp(server->udp_io, dscp);
+        }
     }
     eip_hal_lock();
     server->core.listening = AllOpen(server) ? 1u : 0u;
+    eip_adapter_set_qos_present(&server->core, server->qos);
     eip_hal_unlock();
 }
 
@@ -265,6 +388,44 @@ static void AcceptClients(EipServer *server)
         server->clients[slot].got = 0;
         server->clients[slot].last_rx_ms = eip_hal_millis();
         memcpy(server->clients[slot].ip, peer, 4);
+        if (server->qos) {
+            (void)eip_hal_set_dscp(sock, server->boot_nv.dscp_explicit);
+        }
+    }
+}
+
+/* TCP/IP Interface attr 13: close a TCP connection that has received nothing
+ * for the stored number of seconds; 0 turns this off. The clock is the same
+ * last_rx_ms that eviction uses.
+ *
+ * The originator of the open Class 1 connection is left alone, as in
+ * eviction and matched by address in the same way: a PLC sends nothing on
+ * TCP while its I/O runs, and needs the session again for the Forward_Close.
+ * Its clock is restarted on every pass, so the timeout counts from the end of
+ * the I/O connection. */
+static void DropIdleClients(EipServer *server)
+{
+    uint8_t owner[4];
+    uint8_t io_open;
+    uint32_t limit_ms;
+    uint32_t now = eip_hal_millis();
+    int i;
+
+    eip_hal_lock();
+    limit_ms = (uint32_t)server->core.nv.encap_timeout_s * 1000u;
+    io_open = server->core.io_open;
+    memcpy(owner, server->core.o2t_source_ip, 4);
+    eip_hal_unlock();
+    for (i = 0; i < EIP_ADAPTER_MAX_CLIENTS; i++) {
+        EipServerClient *client = &server->clients[i];
+        if (client->sock < 0) {
+            continue;
+        }
+        if (io_open && memcmp(client->ip, owner, 4) == 0) {
+            client->last_rx_ms = now;
+        } else if (limit_ms != 0 && (now - client->last_rx_ms) >= limit_ms) {
+            DropClient(client);
+        }
     }
 }
 
@@ -525,9 +686,12 @@ int eip_server_init(EipServer *server, const EipAdapterConfig *config)
     if (server->config.domain != 0) {
         eip_adapter_set_dns(&server->core, 0, 0, server->config.domain);
     }
+    eip_adapter_set_nv(&server->core, server->config.nv, server->config.store_nv != 0);
+    server->boot_nv = server->core.nv; /* after the range check */
     server->config.assemblies = 0; /* not kept: the caller's array may go away */
     server->config.product_name = 0;
     server->config.domain = 0;
+    server->config.nv = 0;
 
     RefreshNetif(server);
     OpenSockets(server);
@@ -544,6 +708,9 @@ int eip_server_init(EipServer *server, const EipAdapterConfig *config)
  *   - Clients are served before new ones are accepted, so eviction sees
  *     fresh last_rx_ms values and slots freed by this pass's drops.
  *   - Produce follows the client replies because it reuses server->rsp.
+ *   - TrackState runs before Produce, so a connection opened in this pass
+ *     has its DSCP value before its first T->O packet, and again after it,
+ *     so a timeout found by Produce is reported in this pass.
  *   - RunDeferred is last: its callbacks may be slow or move the address, and
  *     everything this pass owed the network has gone out by then.
  * The interval checks use unsigned differences, safe across the clock wrap. */
@@ -569,10 +736,13 @@ uint32_t eip_server_poll(EipServer *server)
     for (i = 0; i < EIP_ADAPTER_MAX_CLIENTS; i++) {
         ServiceClient(server, &server->clients[i]);
     }
+    DropIdleClients(server);
     if (server->tcp >= 0) {
         AcceptClients(server);
     }
+    TrackState(server);
     Produce(server);
+    TrackState(server);
     RunDeferred(server);
     return NextDue(server);
 }
@@ -693,6 +863,10 @@ int eip_server_snapshot(EipServer *server, EipAdapterView *view)
             view->tcp_clients++;
         }
     }
+    view->module_led = server->module_led;
+    view->network_led = server->network_led;
+    view->qos = a->qos_present;
+    view->nv = a->nv;
     view->assembly_count = a->asm_count;
     for (i = 0; i < a->asm_count && i < EIP_ADAPTER_MAX_ASSEMBLIES; i++) {
         view->assemblies[i].instance = a->asms[i].instance;

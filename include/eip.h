@@ -392,6 +392,45 @@ typedef struct EipNetifInfo {
     char host_name[65];
 } EipNetifInfo;
 
+/* Values a scanner can set that must survive a restart: the application
+ * stores them and hands them back in EipAdapterConfig.nv at the next start. */
+typedef struct EipNvSettings {
+    /* TCP/IP Interface attr 13: a TCP connection silent this many seconds is
+     * closed. 0 never closes one; the range is 1..3600 and the default 120.
+     * A new value applies at once. */
+    uint16_t encap_timeout_s;
+    /* QoS object (0x48) attrs 4..8: the DSCP value, 0..63, that marks Class 1
+     * packets of each priority and explicit messages. Defaults 55, 47, 43,
+     * 31, 27. A new value applies at the next start. */
+    uint8_t dscp_urgent;
+    uint8_t dscp_scheduled;
+    uint8_t dscp_high;
+    uint8_t dscp_low;
+    uint8_t dscp_explicit;
+} EipNvSettings;
+
+/* Fill *nv with the defaults above. */
+void eip_nv_defaults(EipNvSettings *nv);
+
+/* What EipAdapterConfig.on_event reports. */
+enum {
+    EIP_EVENT_IO_OPENED = 1,  /* a Class 1 connection opened */
+    EIP_EVENT_IO_CLOSED = 2,  /* the originator closed it, or opened it again */
+    EIP_EVENT_IO_TIMEOUT = 3, /* the inactivity watchdog closed it */
+    EIP_EVENT_RUN = 4,        /* the open connection went to run */
+    EIP_EVENT_IDLE = 5        /* it went to idle: consumed data reads as zeros */
+};
+
+/* States of the module status and network status indicators. The flashing
+ * states are 500 ms on, 500 ms off; the application does the flashing. */
+enum {
+    EIP_LED_OFF = 0,
+    EIP_LED_GREEN = 1,
+    EIP_LED_GREEN_FLASH = 2,
+    EIP_LED_RED = 3,
+    EIP_LED_RED_FLASH = 4
+};
+
 typedef struct EipAdapterConfig {
     /* Identity object. vendor_id 0 keeps the built-in test identity
      * (vendor 65000, "EIP Test Adapter"). Use your own ODVA vendor id. */
@@ -435,6 +474,31 @@ typedef struct EipAdapterConfig {
      * reset. Runs in the adapter context with eip_hal_lock held: keep it short
      * and do not call eip_adapter_* from it. 0 allows every change. */
     uint8_t (*allow_change)(void *ctx, uint8_t what);
+
+    /* The three callbacks below run in the adapter context with no lock held,
+     * so they may call eip_adapter_read and eip_adapter_write. T->O packets
+     * wait until they return: keep them short. */
+
+    /* Optional. A Class 1 connection opened, closed or timed out, or changed
+     * between run and idle: event is EIP_EVENT_*. Reported within one adapter
+     * pass of the change. A connection that opens in run reports OPENED, then
+     * RUN. A close or timeout is not followed by IDLE. */
+    void (*on_event)(void *ctx, uint8_t event);
+    /* Optional. The module status or network status indicator changed:
+     * EIP_LED_*. Also called once after the start.
+     *   module   green while the adapter runs. Fault states are the
+     *            application's to show.
+     *   network  off with no IP address, flashing green with no connection,
+     *            green while a connection is open, flashing red after a
+     *            connection timed out until one opens again. */
+    void (*on_leds)(void *ctx, uint8_t module, uint8_t network);
+    /* Stored settings from the last store_nv call, or 0 for the defaults.
+     * Copied at the start; a value out of range is replaced by its default. */
+    const EipNvSettings *nv;
+    /* Optional. A scanner changed a stored setting: write *nv (all of it) to
+     * non-volatile storage. 0 makes TCP/IP Interface attr 13 and the QoS
+     * attributes read-only. */
+    void (*store_nv)(void *ctx, const EipNvSettings *nv);
 } EipAdapterConfig;
 
 #define EIP_CHANGE_INTERFACE 1u
@@ -481,6 +545,10 @@ typedef struct EipAdapterView {
     uint8_t tcp_clients;      /* open explicit-messaging sessions */
     uint16_t assembly_count;
     EipAssemblyView assemblies[EIP_ADAPTER_MAX_ASSEMBLIES];
+    uint8_t module_led;       /* EIP_LED_*: the states on_leds reports, for applications that poll */
+    uint8_t network_led;
+    uint8_t qos;              /* the port marks packets, so the QoS object (0x48) exists */
+    EipNvSettings nv;         /* the stored settings as a scanner reads them now */
 } EipAdapterView;
 
 /* The built-in adapter instance. For more than one adapter, or to own the

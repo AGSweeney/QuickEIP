@@ -533,6 +533,19 @@ void eip_hal_udp_close(eip_sock_t sock)
     }
 }
 
+/* ---- QoS ---------------------------------------------------------------- */
+
+/* Not available. Windows accepts setsockopt(IP_TOS) and then leaves the TOS
+ * byte alone: DSCP marking goes through the qWAVE API or group policy, not
+ * the socket. Saying so keeps the adapter from offering a QoS object whose
+ * values never reach the wire. */
+int eip_hal_set_dscp(eip_sock_t sock, uint8_t dscp)
+{
+    (void)sock;
+    (void)dscp;
+    return EIP_ERR_STATE;
+}
+
 /* ---- waiting ------------------------------------------------------------ */
 
 int eip_hal_wait(const eip_sock_t *socks, uint8_t count, uint32_t timeout_ms)

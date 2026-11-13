@@ -10,7 +10,7 @@
  *   WalkPath, ParseCip            EPATH and CIP request parsing
  *   HandleIdentity, HandleAssembly
  *   AcceptOpen, HandleForwardClose   the Connection Manager
- *   HandleNetObject               TCP/IP Interface and Ethernet Link
+ *   HandleQos, HandleNetObject    QoS, TCP/IP Interface and Ethernet Link
  *   HandleMultiple, HandleCip     Multiple Service Packet and the CIP dispatch
  *   eip_adapter_on_encap          entry point for TCP and UDP 44818
  *   eip_adapter_take_input_from, eip_adapter_build_output, eip_adapter_check_timeout
@@ -196,11 +196,74 @@ void eip_adapter_init(EipAdapter *adapter, const uint8_t ip[4], uint32_t serial_
     adapter->netmask[2] = 255;
     adapter->netmask[3] = 0;
     adapter->timeout_floor_ms = 2000;
+    eip_nv_defaults(&adapter->nv);
     AddAssembly(adapter, 100, EIP_ASM_CONSUMED, 8, "Output", 0);
     AddAssembly(adapter, 101, EIP_ASM_PRODUCED, 8, "Input", input_bytes);
     AddAssembly(adapter, 102, EIP_ASM_PRODUCED, 4, "Status", status_bytes);
     AddAssembly(adapter, 150, EIP_ASM_CONFIG, 4, "Config", 0);
     RefreshStatus(adapter);
+}
+
+enum { kEncapTimeoutDefault = 120, kEncapTimeoutMax = 3600, kDscpMax = 63 };
+
+void eip_nv_defaults(EipNvSettings *nv)
+{
+    if (nv == 0) {
+        return;
+    }
+    nv->encap_timeout_s = kEncapTimeoutDefault;
+    nv->dscp_urgent = 55;
+    nv->dscp_scheduled = 47;
+    nv->dscp_high = 43;
+    nv->dscp_low = 31;
+    nv->dscp_explicit = 27;
+}
+
+/* The DSCP field behind QoS attribute 4..8, or 0 for any other attribute. */
+static uint8_t *DscpField(EipNvSettings *nv, uint16_t attribute)
+{
+    switch (attribute) {
+    case 4: return &nv->dscp_urgent;
+    case 5: return &nv->dscp_scheduled;
+    case 6: return &nv->dscp_high;
+    case 7: return &nv->dscp_low;
+    case 8: return &nv->dscp_explicit;
+    default: return 0;
+    }
+}
+
+/* Stored values come from flash the application owns, which may be blank or from an older layout:
+ * a field out of range falls back to its default instead of reaching the wire. */
+void eip_adapter_set_nv(EipAdapter *adapter, const EipNvSettings *nv, int settable)
+{
+    if (adapter == 0) {
+        return;
+    }
+    if (nv != 0) {
+        EipNvSettings defaults;
+        uint16_t attribute;
+
+        eip_nv_defaults(&defaults);
+        adapter->nv = *nv;
+        if (adapter->nv.encap_timeout_s > kEncapTimeoutMax) {
+            adapter->nv.encap_timeout_s = defaults.encap_timeout_s;
+        }
+        for (attribute = 4; attribute <= 8u; attribute++) {
+            uint8_t *field = DscpField(&adapter->nv, attribute);
+            if (*field > kDscpMax) {
+                *field = *DscpField(&defaults, attribute);
+            }
+        }
+    }
+    adapter->nv_settable = settable ? 1u : 0u;
+    adapter->nv_dirty = 0;
+}
+
+void eip_adapter_set_qos_present(EipAdapter *adapter, int present)
+{
+    if (adapter != 0) {
+        adapter->qos_present = present ? 1u : 0u;
+    }
 }
 
 void eip_adapter_set_ip(EipAdapter *adapter, const uint8_t ip[4])
@@ -1038,7 +1101,7 @@ static int HandleAssembly(EipAdapter *adapter, uint8_t service, const CipPath *p
  *
  * Type is 0 null, 1 multicast, 2 point-to-point, 3 reserved. Size is the whole connected payload in
  * bytes: the 2-byte sequence count, the run/idle header if any, then the assembly. The priority bits
- * in between are not used. */
+ * in between (10-11, or 26-27 when large) are read by AcceptOpen for the T->O direction only. */
 static void DecodeParam(uint32_t raw, int large, uint16_t *size, uint8_t *variable, uint8_t *type,
                         uint8_t *redundant)
 {
@@ -1392,6 +1455,8 @@ static int AcceptOpen(EipAdapter *adapter, uint8_t service, const uint8_t *data,
     memcpy(adapter->originator_ip, dest_ip, 4);  /* T->O destination: the group when multicast */
     adapter->originator_port = dest_port;
     adapter->t2o_multicast = (t2o_type == 1u) ? 1u : 0u;
+    /* Priority: 0 low, 1 high, 2 scheduled, 3 urgent. The caller picks the DSCP value from it. */
+    adapter->t2o_priority = (uint8_t)((t2o_raw >> (large ? 26 : 10)) & 3u);
     memcpy(adapter->o2t_source_ip, peer_ip, 4);  /* O->T must come from the originator of this Forward_Open */
     adapter->o2t_seq_valid = 0;
     adapter->o2t_last_seq32 = 0;
@@ -1518,13 +1583,14 @@ static uint16_t PutCipString(uint8_t *out, const char *text)
     return (uint16_t)(2u + n);
 }
 
-/* Layout copied from a real FEN20-4DIP-4DXP (fw 3.3.4.0): TCP/IP class rev 3, one instance, physical link =
+/* Layout copied from a real FEN20-4DIP-4DXP (fw 3.3.4.0): one TCP/IP instance, physical link =
  * Ethernet Link instance 3 ("internal"); Ethernet Link class rev 3 with ETH1, ETH2 (external switch ports) and
- * "internal". This board has one port, so ETH2 reports link down. */
-enum { NET_CLASS_REV = 3, ETH_LINK_INSTANCES = 3 };
+ * "internal". This board has one port, so ETH2 reports link down. The FEN20's TCP/IP class is rev 3; this
+ * one is rev 4, the revision that added attribute 13. */
+enum { TCPIP_CLASS_REV = 4, ETH_CLASS_REV = 3, ETH_LINK_INSTANCES = 3, QOS_CLASS_REV = 1 };
 
 /* TCP/IP Interface instance attribute into out. Returns its length, or 0 for an attribute that is not
- * implemented (7, and anything past 12). out must hold the largest value; the caller's does. */
+ * implemented (7, and anything past 13). out must hold the largest value; the caller's does. */
 static uint16_t TcpIpAttr(const EipAdapter *adapter, uint16_t attribute, uint8_t *out)
 {
     uint16_t n = 0;
@@ -1577,6 +1643,9 @@ static uint16_t TcpIpAttr(const EipAdapter *adapter, uint16_t attribute, uint8_t
     case 12: /* EtherNet/IP QuickConnect */
         out[0] = 0;
         return 1;
+    case 13: /* encapsulation inactivity timeout, seconds; the caller does the closing */
+        eip_store_le16(out, adapter->nv.encap_timeout_s);
+        return 2;
     default:
         return 0;
     }
@@ -1695,6 +1764,29 @@ static uint8_t SetTcpIp(EipAdapter *adapter, uint16_t attribute, const uint8_t *
     EipInterfaceConfig cfg;
     uint8_t status;
 
+    if (attribute == 13) {
+        /* A stored setting, not part of the interface configuration: it needs no set_interface
+         * callback and is not offered to it. */
+        uint16_t seconds;
+        if (adapter->nv_settable == 0) {
+            return EIP_CIP_NOT_SETTABLE;
+        }
+        if (len < 2u) {
+            return EIP_CIP_NOT_ENOUGH;
+        }
+        if (len > 2u) {
+            return EIP_CIP_TOO_MUCH;
+        }
+        seconds = eip_load_le16(data);
+        if (seconds > kEncapTimeoutMax) {
+            return EIP_CIP_INVALID_VALUE;
+        }
+        if (adapter->nv.encap_timeout_s != seconds) {
+            adapter->nv.encap_timeout_s = seconds;
+            adapter->nv_dirty = 1;
+        }
+        return 0;
+    }
     if (adapter->set_interface == 0) {
         return EIP_CIP_NOT_SETTABLE;
     }
@@ -1786,8 +1878,63 @@ static uint8_t SetTcpIp(EipAdapter *adapter, uint16_t attribute, const uint8_t *
     return status;
 }
 
+/* QoS object (0x48), instance 1: the DSCP values of attributes 4..8, one USINT each. Attributes 1..3
+ * (802.1Q tagging and the PTP values) are not implemented. A Set changes what a Get returns and what
+ * the caller stores; the values on the wire stay as they were until the device starts again. The
+ * object has no Get_Attributes_All. */
+static int HandleQos(EipAdapter *adapter, uint8_t service, const CipPath *path, const uint8_t *data,
+                     uint16_t data_len, uint8_t *cip, uint16_t cap, uint16_t *cip_len)
+{
+    uint8_t value[2];
+    uint16_t n;
+    uint8_t *field;
+
+    if (path->has_instance == 0 || path->instance == 0) {
+        if (service != EIP_CIP_GET_ATTRIBUTE || path->has_attribute == 0) {
+            return CipStatus(cip, cap, cip_len, service, EIP_CIP_SERVICE, 0);
+        }
+        if (ClassValue(QOS_CLASS_REV, 1, 1, path->attribute, value, sizeof value, &n) != EIP_OK) {
+            return CipStatus(cip, cap, cip_len, service, EIP_CIP_ATTR, 0);
+        }
+        return CipOk(cip, cap, cip_len, service, value, n);
+    }
+    if (path->instance != 1u) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_NO_OBJECT, 0);
+    }
+    if (service != EIP_CIP_GET_ATTRIBUTE && service != EIP_CIP_SET_ATTRIBUTE) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_SERVICE, 0);
+    }
+    if (path->has_attribute == 0) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_PATH_UNKNOWN, 0);
+    }
+    field = DscpField(&adapter->nv, path->attribute);
+    if (field == 0) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_ATTR, 0);
+    }
+    if (service == EIP_CIP_GET_ATTRIBUTE) {
+        return CipOk(cip, cap, cip_len, service, field, 1);
+    }
+    if (adapter->nv_settable == 0) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_NOT_SETTABLE, 0);
+    }
+    if (data_len < 1u) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_NOT_ENOUGH, 0);
+    }
+    if (data_len > 1u) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_TOO_MUCH, 0);
+    }
+    if (data[0] > kDscpMax) {
+        return CipStatus(cip, cap, cip_len, service, EIP_CIP_INVALID_VALUE, 0);
+    }
+    if (*field != data[0]) {
+        *field = data[0];
+        adapter->nv_dirty = 1;
+    }
+    return CipOk(cip, cap, cip_len, service, 0, 0);
+}
+
 /* Get_Attribute_Single / Get_Attribute_All for TCP/IP Interface (0xF5) and Ethernet Link (0xF6), and
- * Set_Attribute_Single at instance level. Only 0xF5 attrs 3, 5 and 6 can actually be set. */
+ * Set_Attribute_Single at instance level. Only 0xF5 attrs 3, 5, 6 and 13 can actually be set. */
 static int HandleNetObject(EipAdapter *adapter, uint16_t class_id, uint8_t service, const CipPath *path,
                            const uint8_t *data, uint16_t data_len, uint8_t *cip, uint16_t cap,
                            uint16_t *cip_len)
@@ -1800,11 +1947,12 @@ static int HandleNetObject(EipAdapter *adapter, uint16_t class_id, uint8_t servi
     uint16_t n;
     int tcp = (class_id == 0xF5u);
     uint16_t instances = tcp ? 1u : (uint16_t)ETH_LINK_INSTANCES;
+    uint16_t revision = tcp ? (uint16_t)TCPIP_CLASS_REV : (uint16_t)ETH_CLASS_REV;
 
     if (path->has_instance == 0 || path->instance == 0) {
-        uint16_t max_attr = tcp ? 12u : 10u; /* highest instance attribute */
+        uint16_t max_attr = tcp ? 13u : 10u; /* highest instance attribute */
         if (service == EIP_CIP_GET_ALL) { /* revision, highest instance, instance count, max_attr */
-            eip_store_le16(value, NET_CLASS_REV);
+            eip_store_le16(value, revision);
             eip_store_le16(value + 2, instances);
             eip_store_le16(value + 4, instances);
             eip_store_le16(value + 6, max_attr);
@@ -1817,7 +1965,7 @@ static int HandleNetObject(EipAdapter *adapter, uint16_t class_id, uint8_t servi
             eip_store_le16(value, max_attr);
             return CipOk(cip, cap, cip_len, service, value, 2);
         }
-        if (ClassValue(NET_CLASS_REV, instances, instances, path->attribute, value, sizeof value, &n) != EIP_OK) {
+        if (ClassValue(revision, instances, instances, path->attribute, value, sizeof value, &n) != EIP_OK) {
             return CipStatus(cip, cap, cip_len, service, EIP_CIP_ATTR, 0);
         }
         return CipOk(cip, cap, cip_len, service, value, n);
@@ -2036,6 +2184,9 @@ static int HandleCip(EipAdapter *adapter, const uint8_t *message, uint16_t messa
     }
     if (path.class_id == 0xF5u || path.class_id == 0xF6u) {
         return HandleNetObject(adapter, path.class_id, service, &path, data, data_len, cip, cap, cip_len);
+    }
+    if (path.class_id == 0x48u && adapter->qos_present) {
+        return HandleQos(adapter, service, &path, data, data_len, cip, cap, cip_len);
     }
     if (path.class_id == 2u && service == EIP_CIP_MULTIPLE) {
         if (path.has_instance && path.instance != 1u) {

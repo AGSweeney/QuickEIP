@@ -65,7 +65,8 @@ The table lists the CIP objects of the adapter.
 | Message Router (`0x02`) | Multiple Service Packet. |
 | Assembly (`0x04`) | Eight instances or fewer by default, from a shared data pool. Get and Set of the data attribute, and Get of the size. |
 | Connection Manager (`0x06`) | Forward_Open, Large_Forward_Open, and Forward_Close. |
-| TCP/IP Interface (`0xF5`) | Read-only by default. If your application supplies a callback, a scanner can set attributes 3, 5, and 6. |
+| QoS (`0x48`) | The DSCP values for Class 1 packets and explicit messages, attributes 4–8. Only on a port that can mark packets: POSIX, ESP-IDF, and ClearCore. |
+| TCP/IP Interface (`0xF5`) | Read-only by default. If your application supplies a callback, a scanner can set attributes 3, 5, and 6. Attribute 13 is the encapsulation inactivity timeout. |
 | Ethernet Link (`0xF6`) | Three read-only instances: the port in use, a second port that always reports link down, and an internal port. |
 
 The adapter also has these functions:
@@ -80,6 +81,14 @@ The adapter also has these functions:
 - It has a defined safe state for consumed data.
 - It has an `allow_change` callback. Your application can use the callback to
   refuse an IP change or a reset.
+- It has an `on_event` callback. The callback reports when the connection
+  opens, closes, times out, or changes between run and idle.
+- It has an `on_leds` callback. The callback gives the states of the module
+  status and network status indicators.
+- It closes a TCP connection that is silent for the encapsulation inactivity
+  timeout. The default is 120 seconds.
+- It has a `store_nv` callback. Your application uses the callback to keep
+  the timeout and the DSCP values through a restart.
 
 > **WARNING:** A consumed assembly reads as all zeros after a timeout, after a
 > close, and while the PLC is in idle. Make sure that all zeros is a safe
@@ -194,8 +203,8 @@ platform.
 
 | Platform | Port | Adapter runs in | Build | Test status |
 |---|---|---|---|---|
-| NetBurner NNDK 3.x | `ports/netburner` | A task of its own | NNDK makefile | Builds (NNDK 3.5.8, MODM7AE70). Not yet tested on hardware. |
-| ESP-IDF 5.x (ESP32) | `ports/esp-idf` + `ports/bsd_sockets` | A task of its own | IDF component | Builds (IDF 5.5.1, esp32). Not yet tested on hardware. |
+| NetBurner NNDK 3.x | `ports/netburner` | A task of its own | NNDK makefile | Builds (NNDK 3.5.8, MODM7AE70 and MODRT1171). The adapter runs on a MODRT1171. Tested with the QuickEIP scanner on a PC. Not yet tested with a PLC. |
+| ESP-IDF 5.x (ESP32) | `ports/esp-idf` + `ports/bsd_sockets` | A task of its own | IDF component | Builds (IDF 5.5.1, esp32; IDF 6.1, esp32s31). The adapter runs on an ESP32-S31 with Ethernet. Tested with the QuickEIP scanner on a PC. Not yet tested with a PLC. |
 | Teknic ClearCore | `ports/clearcore` + `ports/lwip_raw` | `eip_adapter_poll()` in the main loop | Microchip Studio | Builds (Enhanced ClearCore Library, arm-gcc 6.3). The adapter runs on a ClearCore. Tested with a Micro850. |
 | Linux, WSL, macOS | `ports/posix` + `ports/bsd_sockets` | A thread | CMake | Runs on Ubuntu 24.04 on WSL2 (gcc 13.3). The unit tests and the loopback tests pass, also with ASan and UBSan. Not yet tested with a PLC. |
 | Windows 7 and later | `ports/windows` | A thread, or `eip_adapter_poll()` with `EIP_WIN_POLL_MODE` | CMake | Runs on Windows (Visual Studio 2022, x64 and Win32). The unit tests, the port-contract test, and the loopback tests pass. Explicit scanner calls tested with a Micro850. Adapter not yet tested with a PLC. |

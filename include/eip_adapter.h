@@ -111,6 +111,12 @@ typedef struct EipAdapter {
     uint32_t rx_idle;           /* accepted packets with the run/idle header in idle */
     uint32_t link_speed_mbps;   /* F6 attr 1 */
     uint32_t link_flags;        /* F6 attr 2: bit0 link, bit1 full duplex, bits 2-4 negotiation status */
+    /* Stored settings: TCP/IP Interface attr 13 and the QoS object (0x48). */
+    EipNvSettings nv;           /* the values a Get returns */
+    uint8_t nv_settable;        /* the caller can store them: Set is accepted */
+    uint8_t nv_dirty;           /* a Set changed nv; the caller stores it and clears this */
+    uint8_t qos_present;        /* the QoS object exists; 0 answers "no such object" */
+    uint8_t t2o_priority;       /* T->O priority of the open connection: 0 low, 1 high, 2 scheduled, 3 urgent */
 } EipAdapter;
 
 void eip_adapter_init(EipAdapter *adapter, const uint8_t ip[4], uint32_t serial_number);
@@ -143,6 +149,13 @@ void eip_adapter_set_dns(EipAdapter *adapter, const uint8_t dns1[4], const uint8
 /* Values reported by the Ethernet Link object (0xF6). */
 void eip_adapter_set_link(EipAdapter *adapter, int link_up, uint32_t speed_mbps, int full_duplex,
                           int autonegotiated);
+/* Stored settings (TCP/IP Interface attr 13, QoS attrs 4..8). nv 0 keeps the current values; a field
+ * out of range takes its default. settable accepts Set_Attribute_Single on them: the caller must then
+ * watch nv_dirty and write nv to non-volatile storage. The core never acts on these values itself:
+ * closing idle TCP connections and marking packets are the caller's work. */
+void eip_adapter_set_nv(EipAdapter *adapter, const EipNvSettings *nv, int settable);
+/* The QoS object answers only once the caller says packets are really marked. */
+void eip_adapter_set_qos_present(EipAdapter *adapter, int present);
 /* CIP Vol 2 3-5.3: 239.192.1.0 + ((host_id - 1) & 0x3FF) * 32. */
 void eip_adapter_multicast_address(const uint8_t ip[4], const uint8_t netmask[4], uint8_t out[4]);
 

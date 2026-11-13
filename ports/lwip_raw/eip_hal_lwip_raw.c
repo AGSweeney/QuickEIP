@@ -610,6 +610,31 @@ void eip_hal_udp_close(eip_sock_t sock)
     s->kind = kFree;
 }
 
+/* ---- QoS ---------------------------------------------------------------- */
+
+/* Every lwIP pcb starts with the IP fields, tos among them. DSCP is its top
+ * six bits. A connection lwIP accepts copies the listener's tos, and the
+ * adapter sets each accepted socket again anyway. */
+int eip_hal_set_dscp(eip_sock_t sock, uint8_t dscp)
+{
+    Sock *s;
+    u8_t tos = (u8_t)((dscp & 0x3Fu) << 2);
+
+    if (sock < 0 || sock >= EIP_LWIP_MAX_SOCKETS) {
+        return EIP_ERR_ARG;
+    }
+    s = &s_socks[sock];
+    if (s->kind == kUdp && s->udp != 0) {
+        s->udp->tos = tos;
+        return EIP_OK;
+    }
+    if ((s->kind == kTcp || s->kind == kListen) && s->tcp != 0) {
+        s->tcp->tos = tos;
+        return EIP_OK;
+    }
+    return EIP_ERR_ARG;
+}
+
 /* ---- waiting ------------------------------------------------------------ */
 
 static int AnyReady(const eip_sock_t *socks, uint8_t count)
