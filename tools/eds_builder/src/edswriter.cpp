@@ -220,10 +220,36 @@ QString writeEds(const EdsModel &m)
      * to a placeholder parameter, and names the same parameter as the config
      * format of a connection. Param2 is that placeholder. */
     bool emptyConfig = false;
+    bool dataConfig = false;
     for (const Assembly &a : m.assemblies) {
         if (a.dir == AsmDir::Config && a.size == 0) {
             emptyConfig = true;
         }
+        if (a.dir == AsmDir::Config && a.size > 0) {
+            dataConfig = true;
+        }
+    }
+    /* A config assembly with data is described byte by byte: one member for
+     * each byte, all of them Param3. The two reference files with config data
+     * (ClearLink, and the EZ-EDS output for the port GmbH sample) give every
+     * config member a parameter, because the parameter carries the default
+     * value that configuration software sends in the Forward_Open. A member
+     * with a size and no parameter gave an error list in EZ-EDS. */
+    if (dataConfig) {
+        Entry p(QStringLiteral("Param3"));
+        p.add(QStringLiteral("0,"), QStringLiteral("reserved, shall equal 0"));
+        p.add(QStringLiteral(",,"), QStringLiteral("link path size, link path"));
+        p.add(QStringLiteral("0x0000,"), QStringLiteral("descriptor"));
+        p.add(QStringLiteral("0xC6,"), QStringLiteral("data type: USINT"));
+        p.add(QStringLiteral("1,"), QStringLiteral("data size in bytes"));
+        p.add(QStringLiteral("\"Config Byte\","), QStringLiteral("name"));
+        p.add(QStringLiteral("\"\","), QStringLiteral("units"));
+        p.add(QStringLiteral("\"One byte of the configuration assembly\","), QStringLiteral("help string"));
+        p.add(QStringLiteral("0,255,0,"), QStringLiteral("min, max, default data values"));
+        p.add(QStringLiteral(",,,,"), QStringLiteral("mult, div, base, offset scaling"));
+        p.add(QStringLiteral(",,,,"), QStringLiteral("mult, div, base, offset links"));
+        p.add(QString(), QStringLiteral("decimal places"));
+        out += p.text();
     }
     if (emptyConfig) {
         Entry p(QStringLiteral("Param2"));
@@ -260,11 +286,17 @@ QString writeEds(const EdsModel &m)
         e.add(quoted(a.name) + QLatin1Char(','), what);
         e.add(quoted(assemblyPath(a.instance)) + QLatin1Char(','), QStringLiteral("path"));
         e.add(QString::number(a.size) + QLatin1Char(','), QStringLiteral("size in bytes"));
-        /* Descriptor bit 0, allow value edit, is set on what the originator writes. */
-        e.add(a.dir == AsmDir::Consumed && a.size > 0 ? QStringLiteral("0x0001,") : QStringLiteral("0x0000,"),
+        /* Descriptor bit 0, allow value edit, is set on what the originator writes:
+         * consumed data, and config data. */
+        e.add(a.dir != AsmDir::Produced && a.size > 0 ? QStringLiteral("0x0001,") : QStringLiteral("0x0000,"),
               QStringLiteral("descriptor"));
         e.add(QStringLiteral(",,"), QStringLiteral("reserved"));
-        if (a.size > 0) {
+        if (a.dir == AsmDir::Config && a.size > 0) {
+            for (int i = 0; i < a.size; i++) {
+                e.add(i + 1 < a.size ? QStringLiteral("8,Param3,") : QStringLiteral("8,Param3"),
+                      i == 0 ? QStringLiteral("one member for each byte: size in bits, parameter") : QString());
+            }
+        } else if (a.size > 0) {
             e.add(QStringLiteral("%1,").arg(a.size * 8), QStringLiteral("member size in bits, no member reference"));
         } else if (a.dir == AsmDir::Config) {
             e.add(QStringLiteral("0,Param2"), QStringLiteral("no data: the member is a placeholder"));
@@ -357,7 +389,7 @@ QString writeEds(const EdsModel &m)
     }
 
     if (m.classSections) {
-        out += classSection("TCP/IP Interface Class", 3, "TCP/IP Interface Object", 0xF5, 1);
+        out += classSection("TCP/IP Interface Class", 4, "TCP/IP Interface Object", 0xF5, 1);
         out += classSection("Ethernet Link Class", 3, "Ethernet Link Object", 0xF6, m.ethLinkInstances);
         out += classSection("Identity Class", 1, "Identity Object", 0x01, 1);
     }

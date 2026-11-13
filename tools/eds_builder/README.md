@@ -31,7 +31,7 @@ The table gives the status of each part.
 | `eds_builder.exe`, `eds_builder_cli.exe` | Runs on Windows 11, 64-bit. |
 | Scan | Runs on the three adapter examples and on `tests/fixture`. The results agree with the source files. |
 | EDS file in EZ-EDS 3.40 | One file from an earlier version opened with no error list. That file had no `ModDate` entry. The tool now writes `ModDate` and `ModTime`. Not yet tested with those entries. |
-| EDS file with config data in EZ-EDS 3.40 | EZ-EDS showed an error list. The cause is not yet known. |
+| EDS file with config data in EZ-EDS 3.40 | EZ-EDS showed an error list for a file from version 0.1. Version 0.2 writes the config assembly in a different form. See section 5. Not yet tested with EZ-EDS. |
 | EDS file in PLC software | Not yet tested. |
 
 > **Note:** EZ-EDS does not find all errors when it opens a file. A file with
@@ -118,8 +118,8 @@ The table shows the source of each section of the EDS file.
 | Section | Content |
 |---|---|
 | `[File]`, `[Device]`, `[Device Classification]` | The *Device* tab. |
-| `[Params]` | `Param1` is the requested packet interval (RPI). `Param2` is a placeholder that the tool adds when the config assembly has no data. |
-| `[Assembly]` | One `AssemN` entry for each assembly, as one block of bytes. |
+| `[Params]` | `Param1` is the requested packet interval (RPI). `Param2` is a placeholder that the tool adds when the config assembly has no data. `Param3` is one byte of config data, with the default value 0. The tool adds it when the config assembly has data. |
+| `[Assembly]` | One `AssemN` entry for each assembly. A consumed or produced assembly is one block of bytes. A config assembly with data has one `Param3` member for each byte. |
 | `[Connection Manager]` | The connections. See the rules after this table. |
 | `[Port]`, `[Capacity]`, class sections | Fixed values of the stack: one Class 1 connection and no Class 3 connection. |
 
@@ -136,6 +136,12 @@ These rules apply to the connections:
   and can be multicast or point-to-point.
 
 The sizes in the EDS file are assembly sizes, not wire sizes.
+
+The two reference EDS files with config data give each config member a
+parameter. One is the Teknic ClearLink file. The other is an EZ-EDS file for
+a sample device. Version 0.1 of the tool wrote the config data as one member
+with no parameter, and EZ-EDS showed an error list for that file. It is not
+yet known if the missing parameter was the cause.
 
 ## 6. Checks
 
@@ -159,9 +165,11 @@ accepts the file. See section 1.
 
 These limits apply:
 
-- The EDS file describes each assembly as one block. It has no parameter for
-  each field, and a PLC shows the data as an array of bytes.
-- The EDS file gives only the size of the config data.
+- The EDS file describes each consumed and produced assembly as one block. It
+  has no parameter for each field, and a PLC shows the data as an array of
+  bytes.
+- The EDS file gives each byte of config data the default value 0 and no
+  name. The tool shows a warning for a config assembly with data.
 - All connections use the same RPI range.
 
 ## 8. Build the tool

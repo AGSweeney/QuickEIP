@@ -150,8 +150,8 @@ QList<Issue> validateModel(const EdsModel &m)
                 c.warning(where, QStringLiteral("Config data travels in a data segment of 16-bit words. An odd size "
                                                 "cannot be sent exactly, and the adapter refuses any other size."));
             }
-            c.warning(where, QStringLiteral("The EDS describes the config data as one block with no parameters, so a "
-                                            "PLC sends it as zeros unless the user enters values by hand."));
+            c.warning(where, QStringLiteral("The EDS gives each byte of the config data the default value 0 and no "
+                                            "name, so a PLC sends zeros unless the user enters other values."));
         }
         pool += a.size;
     }

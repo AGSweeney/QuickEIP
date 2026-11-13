@@ -6,7 +6,7 @@
 
 #include "edsmodel.h"
 
-#define EDS_BUILDER_VERSION "0.1"
+#define EDS_BUILDER_VERSION "0.2"
 
 /* The EDS text for the model. It writes whatever the model holds: run
  * validateModel first to know whether the result is a valid file. */
