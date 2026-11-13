@@ -79,9 +79,59 @@ static void ResetDevice(void *ctx, uint8_t type)
     g_reset_type = type;
 }
 
+/* on_event / on_leds / store_nv callbacks (adapter thread too) */
+static volatile uint8_t g_events[16];
+static volatile int g_event_count;
+static volatile uint8_t g_module_led = 0xFF;
+static volatile uint8_t g_network_led = 0xFF;
+static volatile int g_led_calls;
+static volatile int g_stored;
+static EipNvSettings g_stored_nv;
+
+static void OnEvent(void *ctx, uint8_t event)
+{
+    (void)ctx;
+    if (g_event_count < (int)sizeof g_events) {
+        g_events[g_event_count] = event;
+    }
+    g_event_count++;
+}
+
+static void OnLeds(void *ctx, uint8_t module, uint8_t network)
+{
+    (void)ctx;
+    g_module_led = module;
+    g_network_led = network;
+    g_led_calls++;
+}
+
+static void StoreNv(void *ctx, const EipNvSettings *nv)
+{
+    (void)ctx;
+    g_stored_nv = *nv;
+    g_stored++;
+}
+
+/* The events from index first on are exactly the n in want. */
+static int EventsAre(int first, const uint8_t *want, int n)
+{
+    int i;
+
+    if (g_event_count != first + n) {
+        return 0;
+    }
+    for (i = 0; i < n; i++) {
+        if (g_events[first + i] != want[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int main(void)
 {
     EipAdapterConfig acfg;
+    EipNvSettings nv;
     EipAdapterView view;
     EipIdentity identity;
     EipDevice devices[8];
@@ -131,12 +181,25 @@ int main(void)
     acfg.apply_interface = ApplyInterface;
     acfg.reset = ResetDevice;
     acfg.allow_change = AllowChange;
+    acfg.on_event = OnEvent;
+    acfg.on_leds = OnLeds;
+    acfg.store_nv = StoreNv;
+    eip_nv_defaults(&nv);
+    nv.dscp_low = 20;
+    nv.dscp_high = 200; /* out of range: the default, 43, takes its place */
+    acfg.nv = &nv;
     rc = eip_adapter_start(&acfg);
     EXPECT(rc == EIP_OK, "adapter start");
     EXPECT(eip_adapter_start(&acfg) == EIP_ERR_STATE, "second start refused");
     usleep(200000); /* let the adapter thread get going */
     EXPECT(eip_adapter_snapshot(&view) == EIP_OK && view.listening, "adapter listening");
     EXPECT(view.assembly_count == 3 && view.vendor_id == 1234, "adapter view identity");
+    EXPECT(view.nv.encap_timeout_s == 120 && view.nv.dscp_low == 20 && view.nv.dscp_high == 43,
+           "adapter view stored settings");
+    EXPECT(g_led_calls == 1 && g_module_led == EIP_LED_GREEN && g_network_led == EIP_LED_GREEN_FLASH,
+           "leds reported once after start: no connection");
+    EXPECT(view.module_led == EIP_LED_GREEN && view.network_led == EIP_LED_GREEN_FLASH, "adapter view leds");
+    EXPECT(g_event_count == 0, "no events before a connection");
 
     /* ListIdentity, unicast */
     {
@@ -184,6 +247,15 @@ int main(void)
     len = sizeof buf;
     rc = eip_get_attribute(&session, 0x04, 999, 3, buf, &len, &status);
     EXPECT(rc == EIP_ERR_CIP && status == 0x16, "unknown assembly is object does not exist");
+
+    /* The QoS object exists only on a port that marks packets (not on Windows). */
+    len = sizeof buf;
+    rc = eip_get_attribute(&session, 0x48, 1, 7, buf, &len, &status);
+    if (view.qos) {
+        EXPECT(rc == EIP_OK && len == 1 && buf[0] == 20, "QoS object reports the stored low DSCP");
+    } else {
+        EXPECT(rc == EIP_ERR_CIP && status == 0x16, "no QoS object on a port that cannot mark");
+    }
 
     /* allow_change gates TCP/IP Interface sets and Identity Reset. apply_interface and reset run
      * about 150 ms and 300 ms after the reply, so each half sleeps 500 ms before checking them.
@@ -272,6 +344,11 @@ int main(void)
         EXPECT(eip_adapter_snapshot(&view) == EIP_OK && view.io_open && view.run, "adapter view io open");
         EXPECT(view.o2t_instance == 150 && view.t2o_instance == 100 && view.rpi_us == 10000, "adapter view io");
         EXPECT(view.rx_packets >= 15 && view.tx_packets > 0, "adapter counters");
+        {
+            static const uint8_t want[] = {EIP_EVENT_IO_OPENED, EIP_EVENT_RUN};
+            EXPECT(EventsAre(0, want, 2), "events: opened, then run");
+        }
+        EXPECT(g_network_led == EIP_LED_GREEN && view.network_led == EIP_LED_GREEN, "network led green while open");
 
         /* idle: data goes to zero */
         EXPECT(eip_io_produce(&io, out, sizeof out, 0) == EIP_OK, "io produce idle");
@@ -283,6 +360,11 @@ int main(void)
         usleep(30000);
         EXPECT(eip_adapter_snapshot(&view) == EIP_OK && !view.io_open, "adapter io closed");
         EXPECT(view.opens == 1 && view.timeouts == 0, "one open, no timeout");
+        {
+            static const uint8_t want[] = {EIP_EVENT_IDLE, EIP_EVENT_IO_CLOSED};
+            EXPECT(EventsAre(2, want, 2), "events: idle, then closed");
+        }
+        EXPECT(g_network_led == EIP_LED_GREEN_FLASH, "network led flashes green after a close");
     }
 
     /* Inactivity timeout: open, then go silent */
@@ -294,7 +376,36 @@ int main(void)
         usleep(400000); /* 10 ms x 4 << 2 = 160 ms timeout */
         EXPECT(eip_adapter_snapshot(&view) == EIP_OK && !view.io_open && view.timeouts == 1,
                "watchdog closes silent connection");
+        {
+            static const uint8_t want[] = {EIP_EVENT_IO_OPENED, EIP_EVENT_RUN, EIP_EVENT_IO_TIMEOUT};
+            EXPECT(EventsAre(4, want, 3), "events: opened, run, timeout");
+        }
+        EXPECT(g_network_led == EIP_LED_RED_FLASH && view.network_led == EIP_LED_RED_FLASH,
+               "network led flashes red after a timeout");
         (void)eip_io_close(&session, &io);
+    }
+
+    /* TCP/IP Interface attr 13: a scanner sets the encapsulation inactivity timeout, the application
+     * is asked to store it, and a session silent that long is closed. The session has been silent
+     * for well under the default 120 s until now. */
+    {
+        uint8_t seconds[2] = {1, 0};
+
+        rc = eip_set_attribute(&session, 0xF5, 1, 13, seconds, 2, &status);
+        EXPECT(rc == EIP_OK, "set encapsulation inactivity timeout");
+        usleep(100000);
+        EXPECT(g_stored == 1 && g_stored_nv.encap_timeout_s == 1 && g_stored_nv.dscp_low == 20,
+               "store_nv gets the whole settings block");
+        usleep(500000);
+        len = sizeof buf;
+        EXPECT(eip_get_attribute(&session, 0xF5, 1, 13, buf, &len, &status) == EIP_OK && len == 2 && buf[0] == 1,
+               "session alive inside the timeout");
+        usleep(1600000);
+        EXPECT(eip_adapter_snapshot(&view) == EIP_OK && view.tcp_clients == 0, "silent session closed");
+        len = sizeof buf;
+        EXPECT(eip_get_attribute(&session, 0x01, 1, 1, buf, &len, &status) != EIP_OK,
+               "request on the closed session fails");
+        EXPECT(g_stored == 1, "nothing stored without a change");
     }
 
     /* A closed session object can be opened again. */

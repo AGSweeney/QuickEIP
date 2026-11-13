@@ -288,6 +288,17 @@ static void TestHandles(void)
     EXPECT(eip_hal_tcp_accept(EIP_SOCK_INVALID, ip) == EIP_SOCK_INVALID, "accept on invalid handle");
     eip_hal_tcp_close(EIP_SOCK_INVALID);
     eip_hal_udp_close(EIP_SOCK_INVALID);
+    EXPECT(eip_hal_set_dscp(EIP_SOCK_INVALID, 27) != EIP_OK, "set dscp on invalid handle");
+
+    /* Marking is optional: a port either marks (EIP_OK) or says it cannot (EIP_ERR_STATE), and the
+     * socket works afterwards in both cases. Whether the value reaches the wire is not checked. */
+    {
+        eip_sock_t s = eip_hal_udp_open(0, 0);
+        int rc = eip_hal_set_dscp(s, 55);
+        EXPECT(rc == EIP_OK || rc == EIP_ERR_STATE, "set dscp marks or declines");
+        EXPECT(eip_hal_udp_sendto(s, kLocal, 9, (const uint8_t *)"x", 1) == EIP_OK, "socket sends after set dscp");
+        eip_hal_udp_close(s);
+    }
 
     /* Handles are distinct while open, and closing frees them. */
     for (i = 0; i < 6; i++) {

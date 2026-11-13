@@ -10,6 +10,7 @@ time.
 |---|---|
 | Run an adapter | [INTEGRATION.md §3](docs/INTEGRATION.md#3-running-an-adapter) |
 | Connect a PLC, write an EDS | [INTEGRATION.md §3.6](docs/INTEGRATION.md#36-connecting-a-plc) and `examples/eds/QuickEIP_Adapter.eds` |
+| Generate an EDS from a project (Windows) | [tools/eds_builder/README.md](tools/eds_builder/README.md) |
 | Talk to a PLC or device | [INTEGRATION.md §4](docs/INTEGRATION.md#4-using-the-scanner) |
 | NetBurner | [INTEGRATION.md §6](docs/INTEGRATION.md#6-netburner-nndk) |
 | ESP-IDF | [INTEGRATION.md §7](docs/INTEGRATION.md#7-esp-idf-esp32) |
@@ -19,6 +20,7 @@ time.
 | A new platform | [docs/PORTING.md](docs/PORTING.md) |
 | Something isn't working | [INTEGRATION.md §11](docs/INTEGRATION.md#11-troubleshooting) |
 | What isn't supported | [README Limitations](README.md#limitations) |
+| Write or edit documentation | [docs/WRITING_STYLE.md](docs/WRITING_STYLE.md) |
 
 The API reference is the comments in `include/`, plus each port's own header:
 `ports/esp-idf/eip_esp_idf.h` and `ports/clearcore/eip_clearcore.h`.

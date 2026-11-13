@@ -374,6 +374,19 @@ extern "C" void eip_hal_udp_close(eip_sock_t sock)
     }
 }
 
+/* ---- QoS ---------------------------------------------------------------- */
+
+/* Not implemented: this port sends with the fd calls (sendto4, write), which
+ * have no DSCP setting. NNDK can mark through its UDPPacket class (SetDSCP),
+ * which this port does not use. The adapter then has no QoS object and sends
+ * unmarked. */
+extern "C" int eip_hal_set_dscp(eip_sock_t sock, uint8_t dscp)
+{
+    (void)sock;
+    (void)dscp;
+    return EIP_ERR_STATE;
+}
+
 /* ---- waiting ------------------------------------------------------------ */
 
 /* Ticks() rounds up, so the shortest real wait is one tick: with a 20 Hz tick,

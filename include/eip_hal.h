@@ -111,6 +111,15 @@ int eip_hal_udp_recvfrom(eip_sock_t sock, uint8_t *buf, uint16_t cap, uint8_t ip
 
 void eip_hal_udp_close(eip_sock_t sock);
 
+/* ---- QoS ---------------------------------------------------------------- */
+
+/* Mark what this TCP or UDP socket sends from now on with a DSCP value
+ * (0..63, the top six bits of the IPv4 TOS byte). On a listener it applies to
+ * the listener only; the adapter marks each accepted socket itself.
+ * EIP_OK, or EIP_ERR_STATE when the platform cannot mark packets: the
+ * adapter then has no QoS object and sends unmarked. */
+int eip_hal_set_dscp(eip_sock_t sock, uint8_t dscp);
+
 /* ---- waiting ------------------------------------------------------------ */
 
 /* Wait until at least one of the sockets may have data (or a pending

@@ -14,3 +14,13 @@ examples/esp_idf_adapter/managed_components/
 examples/esp_idf_adapter/dependencies.lock
 # EZ-EDS check output
 examples/eds/*.log
+# Tool and editor state: every dot directory (.claude, .vscode, .vs, ...)
+.*/
+# Hardware test firmware
+tests/hardware/esp32s31/build/
+tests/hardware/esp32s31/sdkconfig
+tests/hardware/esp32s31/sdkconfig.old
+tests/hardware/esp32s31/managed_components/
+tests/hardware/esp32s31/dependencies.lock
+tests/hardware/netburner/ports/
+tests/hardware/netburner/src/*.o

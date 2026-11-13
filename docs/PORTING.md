@@ -94,6 +94,17 @@ idle, 3 probes). A shipped port does this as far as its stack allows:
 Receiving broadcasts on a socket bound to the any-address must work. The
 adapter answers broadcast ListIdentity requests on UDP 44818.
 
+### QoS
+
+| Function | Must |
+|---|---|
+| `eip_hal_set_dscp(sock, dscp)` | Mark what a TCP or UDP socket sends from now on with a DSCP value (0–63, the top six bits of the IPv4 TOS byte). Return `EIP_OK`. If the platform cannot mark packets, return `EIP_ERR_STATE`: the adapter then has no QoS object (`0x48`) and sends unmarked. With BSD sockets this is `setsockopt(IP_TOS)` with `dscp << 2`. With the lwIP raw API it is the `tos` field of the pcb. The `windows` and `netburner` ports return `EIP_ERR_STATE`. On lwIP sockets the SYN-ACK of an accepted connection stays unmarked: lwIP sends it before the application sees the socket. |
+
+The adapter calls this on its listener, on each accepted socket, and on both
+UDP sockets. The listener is the first call, and its result says whether the
+QoS object exists. Do not return `EIP_OK` from a stub: the adapter would then
+report DSCP values that never reach the wire.
+
 ### Waiting and the adapter runner
 
 | Function | Must |

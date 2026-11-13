@@ -59,6 +59,17 @@ typedef struct EipServer {
     uint32_t pending_due_ms;
     int16_t reset_type;           /* -1 none */
     uint32_t reset_due_ms;
+    /* What the application was last told, to find changes in the core. */
+    uint8_t seen_io_open;
+    uint8_t seen_run;
+    uint32_t seen_opens;
+    uint32_t seen_timeouts;
+    uint8_t timed_out;            /* the last connection timed out and none has opened since */
+    uint8_t leds_reported;
+    uint8_t module_led;           /* EIP_LED_* */
+    uint8_t network_led;
+    uint8_t qos;                  /* the port marks packets */
+    EipNvSettings boot_nv;        /* the stored settings at init: the DSCP values in use */
 } EipServer;
 
 /* Set up the adapter and try to open its sockets. config may be 0 for the
